@@ -445,7 +445,7 @@ void CHyprRenderer::renderWorkspaceWindows(PHLMONITOR pMonitor, PHLWORKSPACE pWo
         if (w->m_isFloating)
             continue; // floating are in the second pass
 
-        if (!renderTiled)
+        if (!renderFloating)
             continue; // nope
 
         // some things may force us to ignore the special/not special disparity
