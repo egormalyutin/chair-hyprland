@@ -1442,6 +1442,17 @@ WP<CShader> CHyprOpenGLImpl::renderToFBInternal(SP<ITexture> tex, const STexture
     return shader;
 }
 
+static GLenum wrapModeToGl(const uint8_t wrapMode) {
+    if (wrapMode == WRAP_CLAMP_TO_EDGE)
+        return GL_CLAMP_TO_EDGE;
+    else if (wrapMode == WRAP_REPEAT)
+        return GL_REPEAT;
+    else {
+        RASSERT(false, "Invalid wrap mode")
+        return 0;
+    }
+}
+
 void CHyprOpenGLImpl::renderTextureInternal(SP<ITexture> tex, const CBox& box, const STextureRenderData& data) {
     RASSERT(g_pHyprRenderer->m_renderData.pMonitor, "Tried to render texture without begin()!");
     RASSERT(tex, "Attempted to draw nullptr texture!");
@@ -1469,8 +1480,8 @@ void CHyprOpenGLImpl::renderTextureInternal(SP<ITexture> tex, const CBox& box, c
     glActiveTexture(GL_TEXTURE0);
     tex->bind();
 
-    tex->setTexParameter(GL_TEXTURE_WRAP_S, data.wrapX);
-    tex->setTexParameter(GL_TEXTURE_WRAP_T, data.wrapY);
+    tex->setTexParameter(GL_TEXTURE_WRAP_S, wrapModeToGl(data.wrapX));
+    tex->setTexParameter(GL_TEXTURE_WRAP_T, wrapModeToGl(data.wrapY));
 
     if (g_pHyprRenderer->m_renderData.useNearestNeighbor) {
         tex->setTexParameter(GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -1990,6 +2001,20 @@ void CHyprOpenGLImpl::renderTextureWithBlurInternal(SP<ITexture> tex, const CBox
 
         static auto PBLURIGNOREOPACITY = CConfigValue<Config::INTEGER>("decoration:blur:ignore_opacity");
 
+        // handle ext-background-effect-v1 blur region if specified
+        CRegion blurClipRegion = data.clipRegion;
+        auto    PSURFACE       = Desktop::View::CWLSurface::fromResource(data.surface);
+        if (PSURFACE && PSURFACE->m_hasBackgroundEffect && !PSURFACE->m_blurRegion.empty()) {
+            CRegion protocolBlur = PSURFACE->m_blurRegion.copy();
+            protocolBlur.intersect(CBox{0, 0, box.width, box.height});
+            protocolBlur.scale(m_renderData.pMonitor->m_scale);
+            protocolBlur.translate(box.pos());
+            if (blurClipRegion.empty())
+                blurClipRegion = protocolBlur;
+            else
+                blurClipRegion.intersect(protocolBlur);
+        }
+
         g_pHyprRenderer->pushMonitorTransformEnabled(true);
         bool renderModif = g_pHyprRenderer->m_renderData.renderModif.enabled;
         if (!data.blockBlurOptimization)
@@ -2008,7 +2033,7 @@ void CHyprOpenGLImpl::renderTextureWithBlurInternal(SP<ITexture> tex, const CBox
                                   .wrapY          = data.wrapY,
                                   .discardMode    = data.discardMode,
                                   .discardOpacity = data.discardOpacity,
-                                  .clipRegion     = data.clipRegion,
+                                  .clipRegion     = blurClipRegion,
                                   .currentLS      = data.currentLS,
 
                                   .primarySurfaceUVTopLeft     = monitorSpaceBox.pos() / m_renderData.pMonitor->m_transformedSize,

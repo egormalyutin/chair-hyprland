@@ -250,7 +250,7 @@ set_source_files_properties(${CMAKE_SOURCE_DIR}/src/version.h PROPERTIES GENERAT
 set(XKBCOMMON_MINIMUM_VERSION 1.11.0)
 set(WAYLAND_SERVER_MINIMUM_VERSION 1.22.91)
 set(WAYLAND_SERVER_PROTOCOLS_MINIMUM_VERSION 1.47)
-set(LIBINPUT_MINIMUM_VERSION 1.28)
+set(LIBINPUT_MINIMUM_VERSION 1.29)
 
 pkg_check_modules(
   deps
@@ -590,6 +590,7 @@ protocolnew("staging/fifo" "fifo-v1" false)
 protocolnew("staging/commit-timing" "commit-timing-v1" false)
 protocolnew("staging/ext-image-capture-source" "ext-image-capture-source-v1" false)
 protocolnew("staging/ext-image-copy-capture" "ext-image-copy-capture-v1" false)
+protocolnew("staging/ext-background-effect" "ext-background-effect-v1" false)
 
 protocolwayland()
 

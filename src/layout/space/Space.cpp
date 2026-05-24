@@ -159,7 +159,7 @@ eFullscreenRequestResult CSpace::setFullscreen(SP<ITarget> t, eFullscreenMode cu
 
     const auto REQUEST_RESULT = m_algorithm ? m_algorithm->requestFullscreen(t, currentEffectiveMode, mode) : FULLSCREEN_REQUEST_DEFAULT;
 
-    t->setLayoutManagedFullscreen(REQUEST_RESULT == FULLSCREEN_REQUEST_HANDLED_BY_LAYOUT && mode == FSMODE_FULLSCREEN);
+    t->setLayoutManagedFullscreen(REQUEST_RESULT == FULLSCREEN_REQUEST_HANDLED_BY_LAYOUT && (mode == FSMODE_FULLSCREEN || mode == FSMODE_MAXIMIZED));
     if (REQUEST_RESULT != FULLSCREEN_REQUEST_HANDLED_BY_LAYOUT)
         t->setFullscreenMode(mode);
 
@@ -173,7 +173,7 @@ eFullscreenRequestResult CSpace::setFullscreen(SP<ITarget> t, eFullscreenMode cu
     if (mode == FSMODE_NONE && m_algorithm && t->floating())
         m_algorithm->recenter(t);
 
-    recalculate(RECALCULATE_REASON_TOGGLE_FULLSCREEN);
+    recalculate(REQUEST_RESULT == FULLSCREEN_REQUEST_DEFAULT ? RECALCULATE_REASON_TOGGLE_DEFAULT_HANDLED_FULLSCREEN : RECALCULATE_REASON_TOGGLE_LAYOUT_HANDLED_FULLSCREEN);
 
     return REQUEST_RESULT;
 }
@@ -219,7 +219,8 @@ SP<ITarget> CSpace::getNextCandidate(SP<ITarget> old) {
 }
 
 bool Layout::isHardRecalculateReason(eRecalculateReason reason) {
-    return reason != RECALCULATE_REASON_WORKSPACE_CHANGE && reason != RECALCULATE_REASON_SPECIAL_WORKSPACE_TOGGLE && reason != RECALCULATE_REASON_TOGGLE_FULLSCREEN &&
+    return reason != RECALCULATE_REASON_WORKSPACE_CHANGE && reason != RECALCULATE_REASON_SPECIAL_WORKSPACE_TOGGLE &&
+        reason != RECALCULATE_REASON_TOGGLE_LAYOUT_HANDLED_FULLSCREEN && reason != RECALCULATE_REASON_TOGGLE_DEFAULT_HANDLED_FULLSCREEN &&
         reason != RECALCULATE_REASON_INVALIDATE_MONITOR_GEOMETRIES && reason != RECALCULATE_REASON_RENDER_MOINTOR;
 }
 
@@ -232,7 +233,7 @@ eRecalculateReason Layout::recalcMonitorReasonToRecalcReason(CLayoutManager::eRe
     switch (reason) {
         case CLayoutManager::RECALCULATE_MONITOR_REASON_TOGGLE_SPECIAL_WORKSPACE: return RECALCULATE_REASON_SPECIAL_WORKSPACE_TOGGLE;
         case CLayoutManager::RECALCULATE_MONITOR_REASON_WORKSPACE_CHANGE: return RECALCULATE_REASON_WORKSPACE_CHANGE;
-        case CLayoutManager::RECALCULATE_MONITOR_REASON_TOGGLE_FULLSCREEN: return RECALCULATE_REASON_TOGGLE_FULLSCREEN;
+        case CLayoutManager::RECALCULATE_MONITOR_REASON_TOGGLE_FULLSCREEN: return RECALCULATE_REASON_TOGGLE_DEFAULT_HANDLED_FULLSCREEN;
         default: return RECALCULATE_REASON_UNKNOWN;
     }
 }

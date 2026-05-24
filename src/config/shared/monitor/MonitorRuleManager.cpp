@@ -124,6 +124,8 @@ void CMonitorRuleManager::performMonitorReload() {
         if (!m->m_output || m->m_isUnsafeFallback)
             continue;
 
+        m->m_splash = nullptr;
+
         auto rule = get(m);
 
         if (!m->applyMonitorRule(Config::CMonitorRule{rule})) {
@@ -141,6 +143,8 @@ void CMonitorRuleManager::performMonitorReload() {
         performMonitorReload();
 
     m_reloadScheduled = false;
+
+    ensureVRR();
 
     Event::bus()->m_events.monitor.layoutChanged.emit();
 }

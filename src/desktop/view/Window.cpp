@@ -1820,6 +1820,10 @@ void CWindow::mapWindow() {
         Desktop::focusState()->rawMonitorFocus(g_pCompositor->getMonitorFromVector({}));
         PMONITOR = Desktop::focusState()->monitor();
     }
+    if (!PMONITOR || (!PMONITOR->m_activeSpecialWorkspace && !PMONITOR->m_activeWorkspace)) {
+        Log::logger->log(Log::ERR, "mapWindow: no valid monitor/workspace, aborting map for {:x}", (uintptr_t)this);
+        return;
+    }
     auto PWORKSPACE = PMONITOR->m_activeSpecialWorkspace ? PMONITOR->m_activeSpecialWorkspace : PMONITOR->m_activeWorkspace;
     m_monitor       = PMONITOR;
     m_workspace     = PWORKSPACE;
@@ -1834,6 +1838,8 @@ void CWindow::mapWindow() {
     // check for token
     std::string requestedWorkspace = "";
     bool        workspaceSilent    = false;
+
+    bool        monitorSilent = false;
 
     if (*PINITIALWSTRACKING) {
         const auto WINDOWENV = getEnv();
@@ -1895,17 +1901,20 @@ void CWindow::mapWindow() {
             if (MONITORSTR == "unset")
                 m_monitor = PMONITOR;
             else {
-                const auto MONITOR = g_pCompositor->getMonitorFromString(MONITORSTR);
+                const auto ARGPOS  = MONITORSTR.find_last_of(' ');
+                monitorSilent      = ARGPOS != std::string::npos && MONITORSTR.substr(ARGPOS).contains("silent");
+                const auto MONITOR = g_pCompositor->getMonitorFromString(monitorSilent ? MONITORSTR.substr(0, ARGPOS) : MONITORSTR);
 
                 if (MONITOR) {
                     m_monitor = MONITOR;
 
                     const auto PMONITORFROMID = m_monitor.lock();
 
-                    if (m_monitor != PMONITOR) { // NOLINTNEXTLINE
+                    if (m_monitor != PMONITOR && !monitorSilent) // NOLINTNEXTLINE
                         Config::Actions::focusMonitor(PMONITORFROMID);
-                        PMONITOR = PMONITORFROMID;
-                    }
+
+                    PMONITOR = PMONITORFROMID;
+
                     m_workspace = PMONITOR->m_activeSpecialWorkspace ? PMONITOR->m_activeSpecialWorkspace : PMONITOR->m_activeWorkspace;
                     PWORKSPACE  = m_workspace;
 
@@ -2175,7 +2184,7 @@ void CWindow::mapWindow() {
     }
 
     if (!m_ruleApplicator->noFocus().valueOrDefault() && !m_noInitialFocus && (!isX11OverrideRedirect() || (m_isX11 && m_xwaylandSurface->wantsFocus())) && !workspaceSilent &&
-        (!PFORCEFOCUS || PFORCEFOCUS == m_self.lock()) && !g_pInputManager->isConstrained()) {
+        !monitorSilent && (!PFORCEFOCUS || PFORCEFOCUS == m_self.lock()) && !g_pInputManager->isConstrained()) {
 
         // don't steal pointer focus with X11 when buttons are held (e.g., during drags)
         if (!m_isX11 || !g_pInputManager->hasHeldButtons()) {

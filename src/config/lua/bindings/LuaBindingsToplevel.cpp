@@ -1,4 +1,5 @@
 #include "LuaBindingsInternal.hpp"
+#include "Check.hpp"
 
 #include "../objects/LuaEventSubscription.hpp"
 #include "../objects/LuaKeybind.hpp"
@@ -8,6 +9,7 @@
 
 #include "../../../devices/IKeyboard.hpp"
 #include "../../../managers/eventLoop/EventLoopManager.hpp"
+#include "../../../plugins/PluginSystem.hpp"
 
 #include <hyprutils/string/Numeric.hpp>
 #include <hyprutils/string/String.hpp>
@@ -121,9 +123,13 @@ static std::expected<void, std::string> parseKeyString(SKeybind& kb, std::string
 }
 
 static int hlBind(lua_State* L) {
-    auto*            mgr = sc<CConfigManager*>(lua_touserdata(L, lua_upvalueindex(1)));
+    auto* mgr = sc<CConfigManager*>(lua_touserdata(L, lua_upvalueindex(1)));
 
-    std::string_view keys = luaL_checkstring(L, 1);
+    auto  str = Check::string(L, 1);
+    if (!str)
+        return Internal::configError(L, std::format("bind: bad argument 1: {}", str.error()));
+
+    std::string_view keys = *str;
 
     SKeybind         kb;
     kb.submap.name  = mgr->m_currentSubmap;
@@ -242,8 +248,10 @@ static int hlBind(lua_State* L) {
 }
 
 static int hlDefineSubmap(lua_State* L) {
-    auto*       mgr  = sc<CConfigManager*>(lua_touserdata(L, lua_upvalueindex(1)));
-    const char* name = luaL_checkstring(L, 1);
+    auto* mgr  = sc<CConfigManager*>(lua_touserdata(L, lua_upvalueindex(1)));
+    auto  name = Check::string(L, 1);
+    if (!name)
+        return Internal::configError(L, std::format("define_submap: bad argument 1: {}", name.error()));
 
     std::string reset;
     int         fnIdx = 2;
@@ -256,12 +264,12 @@ static int hlDefineSubmap(lua_State* L) {
 
     std::string prev          = mgr->m_currentSubmap;
     std::string prevReset     = mgr->m_currentSubmapReset;
-    mgr->m_currentSubmap      = name;
+    mgr->m_currentSubmap      = *name;
     mgr->m_currentSubmapReset = reset;
 
     lua_pushvalue(L, fnIdx);
-    if (mgr->guardedPCall(0, 0, 0, CConfigManager::LUA_TIMEOUT_DISPATCH_MS, std::format("hl.define_submap(\"{}\")", name)) != LUA_OK) {
-        mgr->addError(std::format("hl.define_submap: error in submap \"{}\": {}", name, lua_tostring(L, -1)));
+    if (mgr->guardedPCall(0, 0, 0, CConfigManager::LUA_TIMEOUT_DISPATCH_MS, std::format("hl.define_submap(\"{}\")", *name)) != LUA_OK) {
+        mgr->addError(std::format("hl.define_submap: error in submap \"{}\": {}", *name, lua_tostring(L, -1)));
         lua_pop(L, 1);
     }
 
@@ -272,6 +280,33 @@ static int hlDefineSubmap(lua_State* L) {
 
 static int hlVersion(lua_State* L) {
     lua_pushstring(L, HYPRLAND_VERSION);
+    return 1;
+}
+
+static int hlGetPlugins(lua_State* L) {
+    if (!g_pPluginSystem) {
+        lua_newtable(L);
+        return 1;
+    }
+
+    const auto PLUGINS = g_pPluginSystem->getAllPlugins();
+
+    lua_createtable(L, PLUGINS.size(), 0);
+
+    int i = 1;
+    for (const auto& plugin : PLUGINS) {
+        lua_createtable(L, 0, 4);
+        lua_pushstring(L, plugin->m_name.c_str());
+        lua_setfield(L, -2, "name");
+        lua_pushstring(L, plugin->m_author.c_str());
+        lua_setfield(L, -2, "author");
+        lua_pushstring(L, plugin->m_version.c_str());
+        lua_setfield(L, -2, "version");
+        lua_pushstring(L, plugin->m_description.c_str());
+        lua_setfield(L, -2, "description");
+        lua_rawseti(L, -2, i++);
+    }
+
     return 1;
 }
 
@@ -317,14 +352,16 @@ static int hlDispatch(lua_State* L) {
 }
 
 static int hlOn(lua_State* L) {
-    auto*       mgr       = sc<CConfigManager*>(lua_touserdata(L, lua_upvalueindex(1)));
-    const char* eventName = luaL_checkstring(L, 1);
+    auto* mgr    = sc<CConfigManager*>(lua_touserdata(L, lua_upvalueindex(1)));
+    auto  evName = Check::string(L, 1);
+    if (!evName)
+        return Internal::configError(L, std::format("on: bad argument 1: {}", evName.error()));
     luaL_checktype(L, 2, LUA_TFUNCTION);
 
     lua_pushvalue(L, 2);
     int        ref = luaL_ref(L, LUA_REGISTRYINDEX);
 
-    const auto handle = mgr->m_eventHandler->registerEvent(eventName, ref);
+    const auto handle = mgr->m_eventHandler->registerEvent(*evName, ref);
     if (!handle.has_value()) {
         luaL_unref(L, LUA_REGISTRYINDEX, ref);
         const auto& known = CLuaEventHandler::knownEvents();
@@ -334,7 +371,7 @@ static int hlOn(lua_State* L) {
         }
         list.pop_back();
         list.pop_back();
-        return Internal::configError(L, "hl.on: unknown event \"{}\". Known events:{}", eventName, list);
+        return Internal::configError(L, "hl.on: unknown event \"{}\". Known events:{}", *evName, list);
     }
 
     Objects::CLuaEventSubscription::push(L, mgr->m_eventHandler.get(), *handle);
@@ -347,8 +384,10 @@ static int hlUnbind(lua_State* L) {
         return 0;
     }
 
-    const char* str = luaL_checkstring(L, 1);
-    g_pKeybindManager->removeKeybind(str);
+    auto str = Check::string(L, 1);
+    if (!str)
+        return Internal::configError(L, std::format("unbind: bad argument 1: {}", str.error()));
+    g_pKeybindManager->removeKeybind(*str);
 
     return 0;
 }
@@ -431,6 +470,7 @@ void Internal::registerToplevelBindings(lua_State* L, CConfigManager* mgr) {
 
     Internal::setFn(L, "dispatch", hlDispatch);
     Internal::setFn(L, "version", hlVersion);
+    Internal::setFn(L, "get_loaded_plugins", hlGetPlugins);
     Internal::setFn(L, "exec_cmd", hlExecCmd);
 
     Internal::setFn(L, "unbind", hlUnbind);

@@ -2,6 +2,8 @@
 
 #include <hyprutils/string/String.hpp>
 
+#include "Check.hpp"
+
 #include "../../supplementary/executor/Executor.hpp"
 
 #include "../../../managers/SeatManager.hpp"
@@ -176,6 +178,10 @@ static int dsp_pass(lua_State* L) {
     const auto PWINDOW = g_pCompositor->getWindowByRegex(lua_tostring(L, lua_upvalueindex(1)));
     if (!PWINDOW)
         return Internal::dispatcherError(L, "hl.pass: window not found", WARN, C_NOTFOUND);
+
+    if (g_pKeybindManager->m_currentKeybind)
+        g_pKeybindManager->m_currentKeybind->releasePending = true;
+
     return Internal::checkResult(L, CA::pass(PWINDOW));
 }
 
@@ -201,6 +207,9 @@ static int dsp_event(lua_State* L) {
 }
 
 static int dsp_global(lua_State* L) {
+    if (g_pKeybindManager->m_currentKeybind)
+        g_pKeybindManager->m_currentKeybind->releasePending = true;
+
     return Internal::checkResult(L, CA::global(lua_tostring(L, lua_upvalueindex(1))));
 }
 
@@ -213,10 +222,14 @@ static int dsp_forceIdle(lua_State* L) {
 }
 
 static int hlExecCmd(lua_State* L) {
-    const auto proc       = luaL_checkstring(L, 1);
+    const auto proc = Check::string(L, 1);
+
+    if (!proc)
+        return Internal::configError(L, std::format("exec_cmd: bad argument 1: {}", proc.error()));
+
     const bool hasRuleArg = !lua_isnoneornil(L, 2);
 
-    lua_pushstring(L, proc);
+    lua_pushstring(L, proc->c_str());
 
     if (hasRuleArg)
         lua_pushvalue(L, 2);
@@ -228,7 +241,11 @@ static int hlExecCmd(lua_State* L) {
 }
 
 static int hlExecRaw(lua_State* L) {
-    lua_pushstring(L, luaL_checkstring(L, 1));
+    auto proc = Check::string(L, 1);
+    if (!proc)
+        return Internal::configError(L, std::format("exec_raw: bad argument 1: {}", proc.error()));
+
+    lua_pushstring(L, proc->c_str());
     lua_pushcclosure(L, dsp_execRaw, 1);
     return 1;
 }
@@ -239,7 +256,11 @@ static int hlExit(lua_State* L) {
 }
 
 static int hlSubmap(lua_State* L) {
-    lua_pushstring(L, luaL_checkstring(L, 1));
+    auto str = Check::string(L, 1);
+    if (!str)
+        return Internal::configError(L, std::format("submap: bad argument 1: {}", str.error()));
+
+    lua_pushstring(L, str->c_str());
     lua_pushcclosure(L, dsp_submap, 1);
     return 1;
 }
@@ -255,7 +276,11 @@ static int hlPass(lua_State* L) {
 }
 
 static int hlLayout(lua_State* L) {
-    lua_pushstring(L, luaL_checkstring(L, 1));
+    auto str = Check::string(L, 1);
+    if (!str)
+        return Internal::configError(L, std::format("layout: bad argument 1: {}", str.error()));
+
+    lua_pushstring(L, str->c_str());
     lua_pushcclosure(L, dsp_layoutMsg, 1);
     return 1;
 }
@@ -277,13 +302,21 @@ static int hlDpms(lua_State* L) {
 }
 
 static int hlEvent(lua_State* L) {
-    lua_pushstring(L, luaL_checkstring(L, 1));
+    auto str = Check::string(L, 1);
+    if (!str)
+        return Internal::configError(L, std::format("event: bad argument 1: {}", str.error()));
+
+    lua_pushstring(L, str->c_str());
     lua_pushcclosure(L, dsp_event, 1);
     return 1;
 }
 
 static int hlGlobal(lua_State* L) {
-    lua_pushstring(L, luaL_checkstring(L, 1));
+    auto str = Check::string(L, 1);
+    if (!str)
+        return Internal::configError(L, std::format("global: bad argument 1: {}", str.error()));
+
+    lua_pushstring(L, str->c_str());
     lua_pushcclosure(L, dsp_global, 1);
     return 1;
 }
@@ -294,7 +327,11 @@ static int hlForceRendererReload(lua_State* L) {
 }
 
 static int hlForceIdle(lua_State* L) {
-    lua_pushnumber(L, luaL_checknumber(L, 1));
+    auto timeout = Check::number(L, 1);
+    if (!timeout)
+        return Internal::configError(L, std::format("force_idle: bad argument 1: {}", timeout.error()));
+
+    lua_pushnumber(L, *timeout);
     lua_pushcclosure(L, dsp_forceIdle, 1);
     return 1;
 }
@@ -358,6 +395,9 @@ static int dsp_sendShortcut(lua_State* L) {
         if (!window)
             return Internal::dispatcherError(L, "send_shortcut: window not found", WARN, C_NOTFOUND);
     }
+
+    if (g_pKeybindManager->m_currentKeybind)
+        g_pKeybindManager->m_currentKeybind->releasePending = true;
 
     return Internal::checkResult(L, CA::pass(modMask, *keycodeResult, window));
 }
@@ -618,10 +658,16 @@ static int dsp_denyFromGroup(lua_State* L) {
 }
 
 static int dsp_mouseDrag(lua_State* L) {
+    if (g_pKeybindManager->m_currentKeybind)
+        g_pKeybindManager->m_currentKeybind->releasePending = true;
+
     return Internal::checkResult(L, CA::mouse("movewindow"));
 }
 
 static int dsp_mouseResize(lua_State* L) {
+    if (g_pKeybindManager->m_currentKeybind)
+        g_pKeybindManager->m_currentKeybind->releasePending = true;
+
     return Internal::checkResult(L, CA::mouse("resizewindow"));
 }
 
