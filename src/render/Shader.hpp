@@ -82,6 +82,13 @@ enum eShaderUniform : uint8_t {
     SHADER_BLURRED_BG,
     SHADER_UV_SIZE,
     SHADER_UV_OFFSET,
+    SHADER_MOTION_PREV_BOX,
+    SHADER_MOTION_CURR_BOX,
+    SHADER_MOTION_SOURCE_BOX,
+    SHADER_MOTION_SOURCE_TEX_SIZE,
+    SHADER_MOTION_SAMPLES,
+    SHADER_BLUR_ALPHA_MATTE,
+    SHADER_BLUR_ALPHA,
 
     SHADER_LAST,
 };
@@ -107,10 +114,13 @@ class CShader {
     GLint  getUniformLocation(eShaderUniform location) const;
     int    getInitialTime() const;
     void   setInitialTime(int time);
+    bool   usesCustomUV() const;
+    void   setUsesCustomUV(bool usesCustomUV);
 
   private:
-    GLuint                         m_program     = 0;
-    float                          m_initialTime = 0;
+    GLuint                         m_program      = 0;
+    float                          m_initialTime  = 0;
+    bool                           m_usesCustomUV = false;
     std::array<GLint, SHADER_LAST> m_uniformLocations;
 
     struct SUniformMatrix3Data {

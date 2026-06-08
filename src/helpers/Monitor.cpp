@@ -158,6 +158,17 @@ void CMonitor::onConnect(bool noRule) {
             });
         }
 
+        // if the monitor has no pending frames, we wont hit the no damage send frame callback path in rendermonitor
+        // this becomes really noticeable in new render scheduling. causing firefox to simply wait for a new frame callback.
+        // when nothing is scheduling new frames.
+        auto mon = m_self.lock();
+        if (!isMirror() && !g_pHyprRenderer->shouldRenderMonitor(mon)) {
+            auto const NOW = Time::steadyNow();
+            g_pHyprRenderer->sendFrameEventsToWorkspace(mon, m_activeWorkspace, NOW);
+            if (m_activeSpecialWorkspace)
+                g_pHyprRenderer->sendFrameEventsToWorkspace(mon, m_activeSpecialWorkspace, NOW);
+        }
+
         m_frameScheduler->onPresented();
 
         m_events.presented.emit();
@@ -384,6 +395,7 @@ void CMonitor::onDisconnect(bool destroy) {
     }};
 
     m_frameScheduler.reset();
+    clearModeRetry();
 
     if (!m_enabled || g_pCompositor->m_isShuttingDown)
         return;
@@ -935,8 +947,11 @@ bool CMonitor::applyMonitorRule(Config::CMonitorRule&& pMonitorRule, bool force)
 
     if (!success) {
         Log::logger->log(Log::ERR, "Monitor {} has NO FALLBACK MODES, and an INVALID one was requested: {:X0}@{:.2f}Hz", m_name, RULE->m_resolution, RULE->m_refreshRate);
+        scheduleModeRetry();
         return true;
     }
+
+    clearModeRetry();
 
     m_vrrActive = m_output->state->state().adaptiveSync // disabled here, will be tested in CConfigManager::ensureVRR()
         || m_createdByUser;                             // wayland backend doesn't allow for disabling adaptive_sync
@@ -1125,6 +1140,47 @@ bool CMonitor::applyMonitorRule(Config::CMonitorRule&& pMonitorRule, bool force)
     m_events.modeChanged.emit();
 
     return true;
+}
+
+void CMonitor::scheduleModeRetry() {
+    static constexpr int  MAX_MODE_RETRIES = 3;
+    static constexpr auto RETRY_DELAY      = std::chrono::seconds(1);
+
+    if (m_modeRetryTimer || m_modeRetryCount >= MAX_MODE_RETRIES)
+        return;
+
+    m_modeRetryCount++;
+
+    Log::logger->log(Log::WARN, "Monitor {} failed to find a valid mode, retrying in 1s ({}/{})", m_name, m_modeRetryCount, MAX_MODE_RETRIES);
+
+    m_modeRetryTimer = makeShared<CEventLoopTimer>(
+        RETRY_DELAY,
+        [self = m_self](SP<CEventLoopTimer>, void*) {
+            const auto PMONITOR = self.lock();
+            if (!PMONITOR)
+                return;
+
+            PMONITOR->m_modeRetryTimer.reset();
+
+            if (!PMONITOR->m_output || !PMONITOR->m_enabled)
+                return;
+
+            auto rule = PMONITOR->m_activeMonitorRule;
+            PMONITOR->applyMonitorRule(std::move(rule), true);
+        },
+        nullptr);
+    g_pEventLoopManager->addTimer(m_modeRetryTimer);
+}
+
+void CMonitor::clearModeRetry() {
+    m_modeRetryCount = 0;
+
+    if (!m_modeRetryTimer)
+        return;
+
+    m_modeRetryTimer->cancel();
+    g_pEventLoopManager->removeTimer(m_modeRetryTimer);
+    m_modeRetryTimer.reset();
 }
 
 void CMonitor::addDamage(const pixman_region32_t* rg) {
@@ -1393,6 +1449,12 @@ void CMonitor::changeWorkspace(const PHLWORKSPACE& pWorkspace, bool internal, bo
     if (pWorkspace == m_activeWorkspace)
         return;
 
+    if (!internal) {
+        g_pInputManager->unconstrainMouse();
+        g_pInputManager->m_emptyFocusCursorSet = false;
+        g_pInputManager->releaseAllMouseButtons();
+    }
+
     const auto POLDWORKSPACE = m_activeWorkspace;
     m_activeWorkspace        = pWorkspace;
 
@@ -1515,6 +1577,8 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
 
         g_pCompositor->updateSuspendedStates();
 
+        Event::bus()->m_events.workspace.specialActive.emit(nullptr, m_self.lock());
+
         return;
     }
 
@@ -1613,6 +1677,8 @@ void CMonitor::setSpecialWorkspace(const PHLWORKSPACE& pWorkspace) {
     Config::monitorRuleMgr()->ensureVRR(m_self.lock());
 
     g_pCompositor->updateSuspendedStates();
+
+    Event::bus()->m_events.workspace.specialActive.emit(pWorkspace, m_self.lock());
 }
 
 void CMonitor::setSpecialWorkspace(const WORKSPACEID& id) {
@@ -1620,7 +1686,24 @@ void CMonitor::setSpecialWorkspace(const WORKSPACEID& id) {
 }
 
 void CMonitor::moveTo(const Vector2D& pos) {
+    if (m_position == pos)
+        return;
+
+    const auto OLD_POSITION = m_position;
+
     m_position = pos;
+
+    if (OLD_POSITION == Vector2D{-1, -1})
+        return;
+
+    const auto DELTA = pos - OLD_POSITION;
+
+    for (const auto& w : g_pCompositor->m_windows) {
+        if (!validMapped(w) || !w->m_isFloating || w->m_monitor != m_self)
+            continue;
+
+        w->layoutTarget()->setPositionGlobal(w->layoutTarget()->position().translate(DELTA));
+    }
 }
 
 Vector2D CMonitor::middle() {
@@ -2028,8 +2111,22 @@ bool CMonitor::attemptDirectScanout() {
     if (m_lastScanout.expired())
         m_prevDrmFormat = m_drmFormat;
 
-    const auto PREV_FORMAT = m_drmFormat;
-    const bool NEEDS_TEST  = !m_lastScanout || m_drmFormat != params.format; // do not retest while it's active
+    const auto  previousFormat           = m_drmFormat;
+    const auto  previousBuffer           = m_output->state->state().buffer;
+    const auto  previousPresentationMode = m_output->state->state().presentationMode;
+    bool        scanoutCommitted         = false;
+    CScopeGuard rollbackState            = {[this, previousFormat, previousBuffer, previousPresentationMode, &scanoutCommitted]() {
+        if (scanoutCommitted)
+            return;
+
+        m_drmFormat = previousFormat;
+        m_output->state->setFormat(previousFormat);
+        m_output->state->setBuffer(previousBuffer);
+        m_output->state->setPresentationMode(previousPresentationMode);
+        m_output->state->resetExplicitFences();
+    }};
+
+    const bool  NEEDS_TEST = !m_lastScanout || m_drmFormat != params.format; // do not retest while it's active
     if (m_drmFormat != params.format) {
         m_output->state->setFormat(params.format);
         m_drmFormat = params.format;
@@ -2042,10 +2139,6 @@ bool CMonitor::attemptDirectScanout() {
 
     if (NEEDS_TEST && !m_state.test()) {
         Log::logger->log(Log::TRACE, "attemptDirectScanout: failed basic test");
-        if (m_drmFormat != PREV_FORMAT) {
-            m_output->state->setFormat(PREV_FORMAT);
-            m_drmFormat = PREV_FORMAT;
-        }
         return false;
     }
 
@@ -2071,13 +2164,11 @@ bool CMonitor::attemptDirectScanout() {
 
     if (!ok) {
         Log::logger->log(Log::TRACE, "attemptDirectScanout: failed to scanout surface");
-        if (m_drmFormat != PREV_FORMAT) {
-            m_output->state->setFormat(PREV_FORMAT);
-            m_drmFormat = PREV_FORMAT;
-        }
         m_lastScanout.reset();
         return false;
     }
+
+    scanoutCommitted = true;
 
     if (m_lastScanout.expired()) {
         m_lastScanout = PCANDIDATE;
@@ -2585,7 +2676,7 @@ void CMonitorState::applyCustomModeWithSwapchain(const SP<Aquamarine::SOutputMod
 }
 
 bool CMonitor::needsACopyFB() {
-    return !m_mirrors.empty() || Screenshare::mgr()->isOutputBeingSSd(m_self.lock());
+    return !m_mirrors.empty() || Screenshare::mgr()->outputNeedsCopyFB(m_self.lock());
 }
 
 bool CMonitor::needsUnmodifiedCopy() {

@@ -736,18 +736,9 @@ void CHyprOpenGLImpl::begin(PHLMONITOR pMonitor, const CRegion& damage_, SP<IFra
     if (!m_shadersInitialized)
         initShaders();
 
-    const bool HAS_MIRROR_FB = g_pHyprRenderer->m_renderData.pMonitor->resources()->hasMirrorFB();
-    const bool NEEDS_COPY_FB = g_pHyprRenderer->m_renderData.pMonitor->needsACopyFB();
-
     g_pHyprRenderer->m_renderData.transformDamage = true;
-    if (HAS_MIRROR_FB != NEEDS_COPY_FB) {
-        // force full damage because the mirror fb will be empty
-        g_pHyprRenderer->m_renderData.damage.set({0, 0, INT32_MAX, INT32_MAX});
-        g_pHyprRenderer->m_renderData.finalDamage.set(g_pHyprRenderer->m_renderData.damage);
-    } else {
-        g_pHyprRenderer->m_renderData.damage.set(damage_);
-        g_pHyprRenderer->m_renderData.finalDamage.set(finalDamage.value_or(damage_));
-    }
+    g_pHyprRenderer->m_renderData.damage.set(damage_);
+    g_pHyprRenderer->m_renderData.finalDamage.set(finalDamage.value_or(damage_));
 
     m_fakeFrame = fb;
 
@@ -759,7 +750,8 @@ void CHyprOpenGLImpl::begin(PHLMONITOR pMonitor, const CRegion& damage_, SP<IFra
 
     g_pHyprRenderer->bindFB(g_pHyprRenderer->m_renderData.pMonitor->resources()->getUnusedWorkBuffer());
     m_offloadedFramebuffer = true;
-    GLFB(g_pHyprRenderer->m_renderData.currentFB)->clearAfterInvalidation();
+    if (!g_pHyprRenderer->m_renderData.damage.empty())
+        GLFB(g_pHyprRenderer->m_renderData.currentFB)->clearAfterInvalidation();
 
     g_pHyprRenderer->m_renderData.mainFB = g_pHyprRenderer->m_renderData.currentFB;
     g_pHyprRenderer->m_renderData.outFB  = fb ? fb : dc<CHyprGLRenderer*>(g_pHyprRenderer.get())->m_currentRenderbuffer->getFB();
@@ -811,19 +803,34 @@ void CHyprOpenGLImpl::end() {
 
         // copy the damaged areas into the mirror buffer
         // we can't use the offloadFB for mirroring / ss, as it contains artifacts from blurring
-        if UNLIKELY (g_pHyprRenderer->m_renderData.pMonitor->needsACopyFB() && !m_fakeFrame)
-            saveBufferForMirror(monbox);
+        if UNLIKELY (g_pHyprRenderer->m_renderData.pMonitor->needsACopyFB() && !m_fakeFrame) {
+            if (saveBufferForMirror(monbox))
+                g_pHyprRenderer->m_renderData.pMonitor->resources()->markMirrorFBUpdated();
+            else
+                g_pHyprRenderer->m_renderData.pMonitor->resources()->invalidateMirrorFB();
+        }
 
         const auto TEX = g_pHyprRenderer->m_renderData.currentFB->getTexture();
         g_pHyprRenderer->bindFB(g_pHyprRenderer->m_renderData.outFB);
         blend(false);
 
-        const auto PRIMITIVE_BLOCKED = m_finalScreenShader->program() >= 1 || g_pHyprRenderer->m_crashingInProgress ||
-            g_pHyprRenderer->m_renderData.pMonitor->m_imageDescription->value() != SImageDescription{};
+        const bool NEEDS_CM          = g_pHyprRenderer->m_renderData.pMonitor->m_imageDescription->value() != g_pHyprRenderer->m_renderData.mainFB->imageDescription()->value();
+        const bool HAS_FINAL_SHADER  = m_finalScreenShader->program() >= 1 || g_pHyprRenderer->m_crashingInProgress;
+        const bool PRIMITIVE_BLOCKED = NEEDS_CM || HAS_FINAL_SHADER;
 
         if LIKELY (!PRIMITIVE_BLOCKED || g_pHyprRenderer->m_renderMode != RENDER_MODE_NORMAL)
             renderTexturePrimitive(TEX, monbox);
-        else // we need to use renderTexture if we do any CM whatsoever.
+        else if (NEEDS_CM && HAS_FINAL_SHADER) {
+            const auto tempFB   = g_pHyprRenderer->m_renderData.pMonitor->resources()->getUnusedWorkBuffer();
+            const auto saveDesc = tempFB->imageDescription();
+            tempFB->setImageDescription(g_pHyprRenderer->m_renderData.pMonitor->m_imageDescription);
+            auto guard = g_pHyprRenderer->bindTempFB(tempFB);
+            GLFB(tempFB)->clearAfterInvalidation();
+            renderTexture(TEX, monbox, {.finalMonitorCM = true});
+            guard.reset();
+            renderTexture(tempFB->getTexture(), monbox, {.finalMonitorCM = true});
+            tempFB->setImageDescription(saveDesc);
+        } else
             renderTexture(TEX, monbox, {.finalMonitorCM = true});
 
         blend(true);
@@ -866,8 +873,8 @@ void CHyprOpenGLImpl::end() {
 }
 
 static const std::vector<std::string> SHADER_INCLUDES = {
-    "defines.h",   "constants.h", "cm_helpers.glsl", "rounding.glsl",    "CM.glsl",    "tonemap.glsl", "gain.glsl",
-    "border.glsl", "shadow.glsl", "inner_glow.glsl", "blurprepare.glsl", "blur1.glsl", "blur2.glsl",   "blurFinish.glsl",
+    "defines.h",   "constants.h",     "cm_helpers.glsl",  "rounding.glsl", "CM.glsl",    "tonemap.glsl",    "gain.glsl",        "border.glsl",
+    "shadow.glsl", "inner_glow.glsl", "blurprepare.glsl", "blur1.glsl",    "blur2.glsl", "blurFinish.glsl", "motion_blur.glsl",
 };
 
 // order matters, see ePreparedFragmentShader
@@ -1132,7 +1139,7 @@ void CHyprOpenGLImpl::renderTexture(SP<ITexture> tex, const CBox& box, STextureR
         data.damage = &g_pHyprRenderer->m_renderData.damage;
     }
 
-    if (data.blur)
+    if (data.blur && !data.forceBlurBlend)
         renderTextureWithBlurInternal(tex, box, data);
     else
         renderTextureInternal(tex, box, data);
@@ -1343,8 +1350,17 @@ WP<CShader> CHyprOpenGLImpl::renderToFBInternal(SP<ITexture> tex, const STexture
         return WORK_BUFFER_IMAGE_DESCRIPTION;
     }();
 
-    if (data.blur && *PBLEND && data.blurredBG)
+    if (data.blur && data.blurredBG && (*PBLEND || data.forceBlurBlend))
         shaderFeatures |= SH_FEAT_BLUR;
+
+    if (data.blur && data.blurredBG && data.blurAlphaMatte && (*PBLEND || data.forceBlurBlend))
+        shaderFeatures |= SH_FEAT_BLUR_MATTE;
+
+    if (data.forceBlurBlend)
+        shaderFeatures |= SH_FEAT_BLUR_ALPHA_MASK;
+
+    if (data.motionBlur.enabled)
+        shaderFeatures |= SH_FEAT_MOTION_BLUR;
 
     if (data.discardActive)
         shaderFeatures |= SH_FEAT_DISCARD;
@@ -1397,11 +1413,19 @@ WP<CShader> CHyprOpenGLImpl::renderToFBInternal(SP<ITexture> tex, const STexture
 
     if (shaderFeatures & SH_FEAT_BLUR) {
         shader->setUniformInt(SHADER_BLURRED_BG, 1);
+        shader->setUniformFloat(SHADER_BLUR_ALPHA, data.blurA);
         shader->setUniformFloat2(SHADER_UV_OFFSET, newBox.x / data.blurredBG->m_size.x, newBox.y / data.blurredBG->m_size.y);
         shader->setUniformFloat2(SHADER_UV_SIZE, newBox.width / data.blurredBG->m_size.x, newBox.height / data.blurredBG->m_size.y);
 
         glActiveTexture(GL_TEXTURE0 + 1);
         data.blurredBG->bind();
+    }
+
+    if (shaderFeatures & SH_FEAT_BLUR_MATTE) {
+        shader->setUniformInt(SHADER_BLUR_ALPHA_MATTE, 2);
+
+        glActiveTexture(GL_TEXTURE0 + 2);
+        data.blurAlphaMatte->bind();
     }
 
     if (data.discardActive) {
@@ -1424,6 +1448,28 @@ WP<CShader> CHyprOpenGLImpl::renderToFBInternal(SP<ITexture> tex, const STexture
     shader->setUniformFloat2(SHADER_FULL_SIZE, FULLSIZE.x, FULLSIZE.y);
     shader->setUniformFloat(SHADER_RADIUS, data.round);
     shader->setUniformFloat(SHADER_ROUNDING_POWER, data.roundingPower);
+
+    if (data.motionBlur.enabled) {
+        CBox motionPrev   = data.motionBlur.previous;
+        CBox motionCurr   = data.motionBlur.current;
+        CBox motionSource = data.motionBlur.source;
+        m_renderData.renderModif.applyToBox(motionPrev);
+        m_renderData.renderModif.applyToBox(motionCurr);
+        m_renderData.renderModif.applyToBox(motionSource);
+
+        motionPrev.transform(Math::wlTransformToHyprutils(Math::invertTransform(m_renderData.pMonitor->m_transform)), m_renderData.pMonitor->m_transformedSize.x,
+                             m_renderData.pMonitor->m_transformedSize.y);
+        motionCurr.transform(Math::wlTransformToHyprutils(Math::invertTransform(m_renderData.pMonitor->m_transform)), m_renderData.pMonitor->m_transformedSize.x,
+                             m_renderData.pMonitor->m_transformedSize.y);
+        motionSource.transform(Math::wlTransformToHyprutils(Math::invertTransform(m_renderData.pMonitor->m_transform)), m_renderData.pMonitor->m_transformedSize.x,
+                               m_renderData.pMonitor->m_transformedSize.y);
+
+        shader->setUniformFloat4(SHADER_MOTION_PREV_BOX, motionPrev.x, motionPrev.y, motionPrev.w, motionPrev.h);
+        shader->setUniformFloat4(SHADER_MOTION_CURR_BOX, motionCurr.x, motionCurr.y, motionCurr.w, motionCurr.h);
+        shader->setUniformFloat4(SHADER_MOTION_SOURCE_BOX, motionSource.x, motionSource.y, motionSource.w, motionSource.h);
+        shader->setUniformFloat2(SHADER_MOTION_SOURCE_TEX_SIZE, data.motionBlur.sourceTexSize.x, data.motionBlur.sourceTexSize.y);
+        shader->setUniformInt(SHADER_MOTION_SAMPLES, data.motionBlur.samples);
+    }
 
     if (data.allowDim && g_pHyprRenderer->m_renderData.currentWindow) {
         if (g_pHyprRenderer->m_renderData.currentWindow->m_notRespondingTint->value() > 0) {
@@ -1475,7 +1521,7 @@ void CHyprOpenGLImpl::renderTextureInternal(SP<ITexture> tex, const CBox& box, c
 
     const auto& glMatrix = g_pHyprRenderer->projectBoxToTarget(newBox, TRANSFORM);
 
-    const bool  renderToOutput = m_applyFinalShader && g_pHyprRenderer->workBufferImageDescription()->id() == g_pHyprRenderer->m_renderData.pMonitor->m_imageDescription->id();
+    const bool  renderToOutput = m_applyFinalShader && tex->m_imageDescription->id() == g_pHyprRenderer->m_renderData.pMonitor->m_imageDescription->id();
 
     glActiveTexture(GL_TEXTURE0);
     tex->bind();
@@ -1496,32 +1542,35 @@ void CHyprOpenGLImpl::renderTextureInternal(SP<ITexture> tex, const CBox& box, c
     shader->setUniformMatrix3fv(SHADER_PROJ, 1, GL_TRUE, glMatrix.getMatrix());
     shader->setUniformInt(SHADER_TEX, 0);
     GLCALL(glBindVertexArray(shader->getUniformLocation(SHADER_SHADER_VAO)));
-    GLCALL(glBindBuffer(GL_ARRAY_BUFFER, shader->getUniformLocation(SHADER_SHADER_VBO)));
 
-    // this tells GPU can keep reading the old block for previous draws while the CPU writes to a new one.
-    // to avoid stalls if renderTextureInternal is called multiple times on same renderpass
-    // at the cost of some temporar vram usage.
-    glBufferData(GL_ARRAY_BUFFER, sizeof(fullVerts), nullptr, GL_DYNAMIC_DRAW);
+    const bool CUSTOMUV = data.allowCustomUV && data.primarySurfaceUVTopLeft != Vector2D(-1, -1);
+    if (CUSTOMUV || shader->usesCustomUV()) {
+        GLCALL(glBindBuffer(GL_ARRAY_BUFFER, shader->getUniformLocation(SHADER_SHADER_VBO)));
 
-    auto verts = fullVerts;
+        // Keep the old block available to previous draws while custom UVs update, or while restoring the defaults.
+        glBufferData(GL_ARRAY_BUFFER, sizeof(fullVerts), nullptr, GL_DYNAMIC_DRAW);
 
-    if (data.allowCustomUV && data.primarySurfaceUVTopLeft != Vector2D(-1, -1)) {
-        const float u0 = data.primarySurfaceUVTopLeft.x;
-        const float v0 = data.primarySurfaceUVTopLeft.y;
-        const float u1 = data.primarySurfaceUVBottomRight.x;
-        const float v1 = data.primarySurfaceUVBottomRight.y;
+        auto verts = fullVerts;
 
-        verts[0].u = u0;
-        verts[0].v = v0;
-        verts[1].u = u0;
-        verts[1].v = v1;
-        verts[2].u = u1;
-        verts[2].v = v0;
-        verts[3].u = u1;
-        verts[3].v = v1;
+        if (CUSTOMUV) {
+            const float u0 = data.primarySurfaceUVTopLeft.x;
+            const float v0 = data.primarySurfaceUVTopLeft.y;
+            const float u1 = data.primarySurfaceUVBottomRight.x;
+            const float v1 = data.primarySurfaceUVBottomRight.y;
+
+            verts[0].u = u0;
+            verts[0].v = v0;
+            verts[1].u = u0;
+            verts[1].v = v1;
+            verts[2].u = u1;
+            verts[2].v = v0;
+            verts[3].u = u1;
+            verts[3].v = v1;
+        }
+
+        glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts.data());
+        shader->setUsesCustomUV(CUSTOMUV);
     }
-
-    glBufferSubData(GL_ARRAY_BUFFER, 0, sizeof(verts), verts.data());
 
     if (!g_pHyprRenderer->m_renderData.clipBox.empty() || !data.clipRegion.empty()) {
         CRegion damageClip = g_pHyprRenderer->m_renderData.clipBox;
@@ -2052,6 +2101,7 @@ void CHyprOpenGLImpl::renderTextureWithBlurInternal(SP<ITexture> tex, const CBox
                           STextureRenderData{
                               .blur           = *PBLEND,
                               .blurredBG      = data.blurredBG,
+                              .blurAlphaMatte = data.blurAlphaMatte,
                               .damage         = data.damage,
                               .a              = data.a * data.overallA,
                               .round          = data.round,
@@ -2410,12 +2460,12 @@ void CHyprOpenGLImpl::renderInnerGlow(const CBox& box, int round, float rounding
     glBindVertexArray(0);
 }
 
-void CHyprOpenGLImpl::saveBufferForMirror(const CBox& box) {
+bool CHyprOpenGLImpl::saveBufferForMirror(const CBox& box) {
     const auto TEX = g_pHyprRenderer->m_renderData.pMonitor->resources()->m_mirrorTex ? g_pHyprRenderer->m_renderData.pMonitor->resources()->m_mirrorTex :
                                                                                         g_pHyprRenderer->m_renderData.currentFB->getTexture();
     if (!TEX) {
         Log::logger->log(Log::ERR, "Invalid source texture for mirror");
-        return;
+        return false;
     }
     auto fb    = g_pHyprRenderer->m_renderData.pMonitor->resources()->mirrorFB();
     auto guard = g_pHyprRenderer->bindTempFB(fb);
@@ -2434,6 +2484,8 @@ void CHyprOpenGLImpl::saveBufferForMirror(const CBox& box) {
                   });
 
     blend(true);
+
+    return true;
 }
 
 WP<CShader> CHyprOpenGLImpl::useShader(WP<CShader> prog) {
@@ -2627,7 +2679,12 @@ UP<CEGLSync> CEGLSync::create() {
 
     int fd = g_pHyprOpenGL->m_proc.eglDupNativeFenceFDANDROID(g_pHyprOpenGL->m_eglDisplay, sync);
     if UNLIKELY (fd == EGL_NO_NATIVE_FENCE_FD_ANDROID) {
-        Log::logger->log(Log::ERR, "eglDupNativeFenceFDANDROID failed");
+        const auto ERR = eglGetError();
+        Log::logger->log(Log::ERR, "eglDupNativeFenceFDANDROID failed: 0x{:x}", sc<int>(ERR));
+
+        if (g_pHyprOpenGL->m_proc.eglDestroySyncKHR(g_pHyprOpenGL->m_eglDisplay, sync) != EGL_TRUE)
+            Log::logger->log(Log::ERR, "eglDestroySyncKHR failed after eglDupNativeFenceFDANDROID failure");
+
         return nullptr;
     }
 

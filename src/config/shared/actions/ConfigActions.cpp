@@ -230,15 +230,22 @@ ActionResult Actions::pinWindow(eTogglableAction action, std::optional<PHLWINDOW
     if (wantPin == window->m_pinned)
         return {};
 
-    window->m_pinned = wantPin;
-    window->updateFullscreenInputState();
-    *window->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN) = window->isBlockedByFullscreen() ? 0.F : 1.F;
-
     const auto PMONITOR = window->m_monitor.lock();
     if (!PMONITOR)
         return actionError("Window has no monitor", eActionErrorLevel::WARNING, eActionErrorCode::INVALID_STATE);
 
-    window->layoutTarget()->assignToSpace(PMONITOR->m_activeWorkspace->m_space);
+    if (!PMONITOR->m_activeWorkspace || !PMONITOR->m_activeWorkspace->m_space)
+        return actionError("Monitor has no active workspace", eActionErrorLevel::WARNING, eActionErrorCode::INVALID_STATE);
+
+    const auto LAYOUTTARGET = window->layoutTarget();
+    if (!LAYOUTTARGET)
+        return actionError("Window has no layout target", eActionErrorLevel::WARNING, eActionErrorCode::INVALID_STATE);
+
+    window->m_pinned = wantPin;
+    window->updateFullscreenInputState();
+    *window->alpha(Desktop::View::WINDOW_ALPHA_FULLSCREEN) = window->isBlockedByFullscreen() ? 0.F : 1.F;
+
+    LAYOUTTARGET->assignToSpace(PMONITOR->m_activeWorkspace->m_space);
     window->m_ruleApplicator->propertiesChanged(Desktop::Rule::RULE_PROP_PINNED);
 
     const auto PWORKSPACE = window->m_workspace;
@@ -917,10 +924,6 @@ ActionResult Actions::changeWorkspace(PHLWORKSPACE ws) {
         return {};
     }
 
-    g_pInputManager->unconstrainMouse();
-    g_pInputManager->m_emptyFocusCursorSet = false;
-    g_pInputManager->releaseAllMouseButtons();
-
     const auto PMONITORWORKSPACEOWNER = PMONITOR == ws->m_monitor ? PMONITOR : ws->m_monitor.lock();
     if (!PMONITORWORKSPACEOWNER)
         return actionError("Workspace has no monitor", eActionErrorLevel::WARNING, eActionErrorCode::INVALID_STATE);
@@ -973,7 +976,10 @@ static PHLWORKSPACE resolveWorkspaceForChange(const std::string& args) {
         return nullptr;
 
     const auto PCURRENTWORKSPACE = PMONITOR->m_activeWorkspace;
-    const bool EXPLICITPREVIOUS  = args.contains("previous");
+    if (!PCURRENTWORKSPACE)
+        return nullptr;
+
+    const bool EXPLICITPREVIOUS = args.contains("previous");
 
     // handle "previous" workspace
     if (args.starts_with("previous")) {

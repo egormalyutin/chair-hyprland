@@ -3,6 +3,10 @@
 #include "../../hyprctlCompat.hpp"
 #include "tests.hpp"
 
+#include <hyprutils/utils/ScopeGuard.hpp>
+
+using namespace Hyprutils::Utils;
+
 TEST_CASE(scrollFocusCycling) {
     OK(getFromSocket("r/eval hl.config({ general = { layout = 'scrolling' } })"));
 
@@ -1117,6 +1121,45 @@ TEST_CASE(testScrollInhibitor) {
     }
 }
 
+TEST_CASE(layoutRuleExpand) {
+    // set current layout to scrolling
+    OK(getFromSocket(
+        "r/eval hl.config({ general = { layout = 'scrolling', gaps_in = 0, border_size = 0, gaps_out = 0 }, scrolling = {column_width = 0.5, fullscreen_on_one_column = true} })"));
+
+    if (!Tests::spawnKitty("a")) {
+        FAIL_TEST("Could not spawn kitty with win class `a`");
+    }
+
+    const std::string sizeSingle  = Tests::getAttribute(getFromSocket("/activewindow"), "size");
+    const int         sizeSingleX = std::stoi(sizeSingle.substr(0, sizeSingle.find(',')));
+
+    for (auto const& win : {"b", "c"}) {
+        if (!Tests::spawnKitty(win)) {
+            FAIL_TEST("Could not spawn kitty with win class `{}`", win);
+        }
+    }
+
+    OK(getFromSocket("dispatch hl.dsp.window.resize({x = 100, y = 500, window = 'class:a'})"));
+    OK(getFromSocket("dispatch hl.dsp.window.resize({x = 100, y = 500, window = 'class:c'})"));
+
+    OK(getFromSocket("dispatch hl.dsp.focus({window = 'class:b'})"));
+
+    // const std::string sizeBefore  = Tests::getAttribute(getFromSocket("/activewindow"), "size");
+    // const int         sizeBeforeX = std::stoi(sizeBefore.substr(0, sizeBefore.find(',')));
+
+    OK(getFromSocket("/dispatch hl.dsp.layout('fit expand')"));
+
+    const std::string sizeAfter  = Tests::getAttribute(getFromSocket("/activewindow"), "size");
+    const int         sizeAfterX = std::stoi(sizeAfter.substr(0, sizeAfter.find(',')));
+
+    if (sizeAfterX >= sizeSingleX - 200) {
+        NLog::log("{}Passed: {}Expected the width of window of class \"b\" to take up all remaining space {}, got {}.", Colors::GREEN, Colors::RESET, sizeSingleX - 200,
+                  sizeAfterX);
+    } else {
+        FAIL_TEST("{}Failed: {}Expected the width of window of class \"b\" to take up all remaining space {}, got {}.", Colors::RED, Colors::RESET, sizeSingleX - 200, sizeAfterX);
+        return;
+    }
+}
 TEST_CASE(scrollTapeOnClickOutOfWindow) {
     /*
      * Do not move tape on click in the direction, but out of the window  
@@ -1147,4 +1190,121 @@ TEST_CASE(scrollTapeOnClickOutOfWindow) {
     } else {
         FAIL_TEST("{}Failed: {}Expected the x coordinate of window of class \"A\" to be < 0, got {}.", Colors::RED, Colors::RESET, posAx);
     }
+}
+
+TEST_CASE(properFocusBehvaior) {
+    // test that focus history does not fuck with proper workspace preference
+
+    OK(getFromSocket("r/eval hl.config({ general = { layout = 'scrolling' } })"));
+
+    OK(getFromSocket("/output create headless HEADLESS-3"));
+    CScopeGuard x([&] { OK(getFromSocket("/output remove HEADLESS-3")); });
+
+    auto        test = [&] {
+        OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+
+        Tests::spawnKitty("a");
+        Tests::waitUntilWindowsN(1);
+
+        OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
+
+        Tests::spawnKitty("b");
+        OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:b' })"));
+        Tests::spawnKitty("c");
+        OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:c' })"));
+        Tests::spawnKitty("d");
+        OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:d' })"));
+
+        Tests::waitUntilWindowsN(4);
+
+        {
+            const auto str = getFromSocket("/activewindow");
+            EXPECT_CONTAINS(str, "class: d");
+        }
+
+        OK(getFromSocket("/dispatch hl.dsp.focus({ direction = 'left' })"));
+
+        {
+            const auto str = getFromSocket("/activewindow");
+            EXPECT_CONTAINS(str, "class: c");
+        }
+
+        OK(getFromSocket("/dispatch hl.dsp.focus({ direction = 'left' })"));
+
+        {
+            const auto str = getFromSocket("/activewindow");
+            EXPECT_CONTAINS(str, "class: b");
+        }
+
+        OK(getFromSocket("/dispatch hl.dsp.focus({ direction = 'left' })"));
+
+        {
+            const auto str = getFromSocket("/activewindow");
+            EXPECT_CONTAINS(str, "class: a");
+        }
+
+        OK(getFromSocket("/dispatch hl.dsp.focus({ direction = 'right' })"));
+
+        {
+            const auto str = getFromSocket("/activewindow");
+            EXPECT_CONTAINS(str, "class: b");
+        }
+
+        OK(getFromSocket("/dispatch hl.dsp.focus({ direction = 'right' })"));
+
+        {
+            const auto str = getFromSocket("/activewindow");
+            EXPECT_CONTAINS(str, "class: c");
+        }
+
+        OK(getFromSocket("/dispatch hl.dsp.focus({ direction = 'right' })"));
+
+        {
+            const auto str = getFromSocket("/activewindow");
+            EXPECT_CONTAINS(str, "class: d");
+        }
+
+        OK(getFromSocket("/dispatch hl.dsp.focus({ direction = 'left' })"));
+
+        {
+            const auto str = getFromSocket("/activewindow");
+            EXPECT_CONTAINS(str, "class: c");
+        }
+
+        // now we have a situation of:
+        // HEADLESS-2: a
+        // HEADLESS-3: b | c d | -> b is offscreen
+
+        OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
+
+        {
+            const auto str = getFromSocket("/activewindow");
+            EXPECT_CONTAINS(str, "class: a");
+        }
+
+        OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-3' })"));
+
+        {
+            const auto str = getFromSocket("/activewindow");
+            EXPECT_CONTAINS(str, "class: c");
+        }
+
+        // now we have a history of a being more recent than b, but if we move left, we should still focus b.
+
+        OK(getFromSocket("/dispatch hl.dsp.focus({ direction = 'left' })"));
+
+        {
+            const auto str = getFromSocket("/activewindow");
+            EXPECT_CONTAINS(str, "class: b");
+        }
+
+        Tests::killAllWindows();
+        Tests::waitUntilWindowsN(0);
+    };
+
+    OK(getFromSocket("/eval hl.config({ binds = { focus_preferred_method = 0 } })")); // set history mode, default
+    test();
+
+    OK(getFromSocket("/eval hl.config({ binds = { focus_preferred_method = 1 } })")); // set length mode
+    test();
 }

@@ -7,9 +7,7 @@
 #include "../../managers/KeybindManager.hpp"
 #include "../../Compositor.hpp"
 
-#include "../../render/decorations/CHyprGroupBarDecoration.hpp"
 #include "../shared/complex/ComplexDataTypes.hpp"
-#include "../ConfigValue.hpp"
 #include "../shared/monitor/MonitorRuleManager.hpp"
 #include "../shared/workspace/WorkspaceRuleManager.hpp"
 #include "../shared/animation/AnimationTree.hpp"
@@ -21,14 +19,11 @@
 #include "../../xwayland/XWayland.hpp"
 #include "../../protocols/OutputManagement.hpp"
 #include "../../managers/animation/AnimationManager.hpp"
-#include "../../desktop/view/LayerSurface.hpp"
 #include "../../desktop/rule/Engine.hpp"
 #include "../../desktop/rule/windowRule/WindowRule.hpp"
 #include "../../desktop/rule/layerRule/LayerRule.hpp"
 #include "../../debug/HyprCtl.hpp"
-#include "../../desktop/state/FocusState.hpp"
-#include "../../layout/space/Space.hpp"
-#include "../../layout/supplementary/WorkspaceAlgoMatcher.hpp"
+#include "../../layout/LayoutManager.hpp"
 
 #include "../../render/Renderer.hpp"
 #include "../../errorOverlay/Overlay.hpp"
@@ -61,9 +56,8 @@
 #include "../../managers/input/trackpad/gestures/ScrollMoveGesture.hpp"
 
 #include "../../event/EventBus.hpp"
-
 #include "../../protocols/types/ContentType.hpp"
-#include "render/types.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <hyprutils/path/Path.hpp>
@@ -84,6 +78,7 @@
 #include <hyprutils/string/ConstVarList.hpp>
 #include <filesystem>
 #include <memory>
+
 using namespace Hyprutils::String;
 using namespace Hyprutils::Animation;
 using namespace Config;
@@ -647,7 +642,7 @@ void CConfigManager::reloadRuleConfigs() {
     // FIXME: this should also remove old values if they are removed
 
     for (const auto& r : Desktop::Rule::allMatchPropStrings()) {
-        m_config->addSpecialConfigValue("windowrule", ("match:" + r).c_str(), Hyprlang::STRING{""});
+        m_config->addSpecialConfigValue("windowrule", std::string{"match:"}.append(r).c_str(), Hyprlang::STRING{""});
     }
 
     for (const auto& r : Desktop::Rule::windowEffects()->allEffectStrings()) {
@@ -655,7 +650,7 @@ void CConfigManager::reloadRuleConfigs() {
     }
 
     for (const auto& r : Desktop::Rule::allMatchPropStrings()) {
-        m_config->addSpecialConfigValue("layerrule", ("match:" + r).c_str(), Hyprlang::STRING{""});
+        m_config->addSpecialConfigValue("layerrule", std::string{"match:"}.append(r).c_str(), Hyprlang::STRING{""});
     }
 
     for (const auto& r : Desktop::Rule::layerEffects()->allEffectStrings()) {
@@ -835,8 +830,10 @@ std::optional<std::string> CConfigManager::handleMonitorv2(const std::string& ou
     if (VAL && VAL->m_bSetByUser)
         parser.rule().m_sdrSaturation = std::any_cast<Hyprlang::FLOAT>(VAL->getValue());
     VAL = m_config->getSpecialConfigValuePtr("monitorv2", "vrr", output.c_str());
-    if (VAL && VAL->m_bSetByUser)
-        parser.rule().m_vrr = std::any_cast<Hyprlang::INT>(VAL->getValue());
+    if (VAL && VAL->m_bSetByUser) {
+        const auto VRR      = sc<int>(std::any_cast<Hyprlang::INT>(VAL->getValue()));
+        parser.rule().m_vrr = VRR < 0 ? std::nullopt : std::optional(VRR);
+    }
     VAL = m_config->getSpecialConfigValuePtr("monitorv2", "transform", output.c_str());
     if (VAL && VAL->m_bSetByUser)
         parser.parseTransform(std::any_cast<Hyprlang::STRING>(VAL->getValue()));
@@ -895,7 +892,7 @@ std::optional<std::string> CConfigManager::addRuleFromConfigKey(const std::strin
     SP<Desktop::Rule::CWindowRule> rule = makeShared<Desktop::Rule::CWindowRule>(name);
 
     for (const auto& r : Desktop::Rule::allMatchPropStrings()) {
-        auto VAL = m_config->getSpecialConfigValuePtr("windowrule", ("match:" + r).c_str(), name.c_str());
+        auto VAL = m_config->getSpecialConfigValuePtr("windowrule", std::string{"match:"}.append(r).c_str(), name.c_str());
         if (VAL && VAL->m_bSetByUser)
             rule->registerMatch(Desktop::Rule::matchPropFromString(r).value_or(Desktop::Rule::RULE_PROP_NONE), std::any_cast<Hyprlang::STRING>(VAL->getValue()));
     }
@@ -922,7 +919,7 @@ std::optional<std::string> CConfigManager::addLayerRuleFromConfigKey(const std::
     SP<Desktop::Rule::CLayerRule> rule = makeShared<Desktop::Rule::CLayerRule>(name);
 
     for (const auto& r : Desktop::Rule::allMatchPropStrings()) {
-        auto VAL = m_config->getSpecialConfigValuePtr("layerrule", ("match:" + r).c_str(), name.c_str());
+        auto VAL = m_config->getSpecialConfigValuePtr("layerrule", std::string{"match:"}.append(r).c_str(), name.c_str());
         if (VAL && VAL->m_bSetByUser)
             rule->registerMatch(Desktop::Rule::matchPropFromString(r).value_or(Desktop::Rule::RULE_PROP_NONE), std::any_cast<Hyprlang::STRING>(VAL->getValue()));
     }
@@ -1042,7 +1039,10 @@ void CConfigManager::postConfigReload(const Hyprlang::CParseResult& result) {
 
     auto disableStdout = !std::any_cast<Hyprlang::INT>(m_config->getConfigValue("debug:enable_stdout_logs"));
     if (disableStdout && m_isFirstLaunch)
-        Log::logger->log(Log::DEBUG, "Disabling stdout logs! Check the log for further logs.");
+        Log::logger->log(Log::DEBUG,
+                         "Disabling stdout logs (debug.enable_stdout_logs = 0). "
+                         "Further logs will be written to {}",
+                         g_pCompositor->m_instancePath + (ISDEBUG ? "/hyprlandd.log" : "/hyprland.log"));
 
     for (auto const& m : g_pCompositor->m_monitors) {
         // mark blur dirty

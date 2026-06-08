@@ -203,6 +203,11 @@ void CDragStateController::dragEnd() {
         }
     }
 
+    if (const auto W = draggingTarget->window(); W) {
+        W->resetMotionBlur();
+        W->m_floatingOffset = {};
+    }
+
     if (m_draggingTiled) {
         // make sure to check if we are floating because drag into group could make us tiled already
         if (draggingTarget->floating())
@@ -277,6 +282,13 @@ void CDragStateController::mouseMove(const Vector2D& mousePos) {
     m_lastDragXY = mousePos;
 
     DRAGGINGTARGET->damageEntire();
+
+    const auto MOTIONWINDOW = DRAGGINGTARGET->window();
+    const bool TRACKMOTION  = validMapped(MOTIONWINDOW);
+    CBox       previousFull;
+
+    if (TRACKMOTION)
+        previousFull = MOTIONWINDOW->getFullWindowBoundingBox();
 
     if (m_dragMode == MBIND_MOVE) {
 
@@ -356,6 +368,9 @@ void CDragStateController::mouseMove(const Vector2D& mousePos) {
             DRAGGINGTARGET->warpPositionSize();
         }
     }
+
+    if (TRACKMOTION)
+        MOTIONWINDOW->recordMotionBlur(previousFull, MOTIONWINDOW->getFullWindowBoundingBox());
 
     // get middle point
     Vector2D middle = DRAGGINGTARGET->position().middle();
