@@ -9,13 +9,14 @@
 #include <src/managers/PointerManager.hpp>
 #include <src/managers/SeatManager.hpp>
 #include <src/managers/input/trackpad/TrackpadGestures.hpp>
-#include <src/helpers/Monitor.hpp>
+#include <src/output/Monitor.hpp>
 #include <src/desktop/rule/windowRule/WindowRuleEffectContainer.hpp>
 #include <src/desktop/rule/layerRule/LayerRuleEffectContainer.hpp>
 #include <src/desktop/rule/windowRule/WindowRuleApplicator.hpp>
 #include <src/desktop/view/LayerSurface.hpp>
 #include <src/Compositor.hpp>
 #include <src/desktop/state/FocusState.hpp>
+#include <src/state/MonitorState.hpp>
 #include <src/layout/LayoutManager.hpp>
 #undef private
 
@@ -251,7 +252,7 @@ static SDispatchResult expectCursorZoom(std::string in) {
             return {.success = false, .error = "invalid input"};
     }
 
-    const auto PMONITOR = g_pCompositor->getMonitorFromVector(g_pInputManager->getMouseCoordsInternal());
+    const auto PMONITOR = State::monitorState()->query().vec(g_pInputManager->getMouseCoordsInternal()).run();
 
     if (!PMONITOR)
         return {.success = false, .error = "No monitor under cursor"};

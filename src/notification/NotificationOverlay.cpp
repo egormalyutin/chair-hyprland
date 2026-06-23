@@ -9,7 +9,7 @@
 #include "../render/pass/RectPassElement.hpp"
 #include "../render/pass/TexPassElement.hpp"
 #include "../event/EventBus.hpp"
-
+#include "../state/MonitorState.hpp"
 #include "../managers/animation/AnimationManager.hpp"
 #include "../render/Renderer.hpp"
 
@@ -115,8 +115,8 @@ void CNotificationOverlay::ensureNotificationCache(CNotification& notif, PHLMONI
 }
 
 void CNotificationOverlay::scheduleFrames() const {
-    for (auto const& m : g_pCompositor->m_monitors) {
-        g_pCompositor->scheduleFrameForMonitor(m);
+    for (auto const& m : State::monitorState()->monitors()) {
+        m->scheduleFrame();
     }
 }
 
@@ -308,7 +308,7 @@ void CNotificationOverlay::draw(PHLMONITOR pMonitor) {
     g_pHyprRenderer->damageBox(damage);
     g_pHyprRenderer->damageBox(m_lastDamage);
 
-    g_pCompositor->scheduleFrameForMonitor(pMonitor);
+    pMonitor->scheduleFrame();
 
     m_lastDamage = damage;
 }

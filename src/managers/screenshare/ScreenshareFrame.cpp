@@ -7,7 +7,8 @@
 #include "../../Compositor.hpp"
 #include "../../render/Renderer.hpp"
 #include "../../render/OpenGL.hpp"
-#include "../../helpers/Monitor.hpp"
+#include "../../output/Monitor.hpp"
+#include "../../state/MonitorState.hpp"
 #include "../../desktop/view/Window.hpp"
 #include "../../desktop/state/FocusState.hpp"
 #include "../../render/pass/ClearPassElement.hpp"
@@ -71,7 +72,7 @@ eScreenshareError CScreenshareFrame::share(SP<IHLBuffer> buffer, const CRegion& 
     if UNLIKELY (done())
         return ERROR_STOPPED;
 
-    if UNLIKELY (!m_session->monitor() || !g_pCompositor->monitorExists(m_session->monitor())) {
+    if UNLIKELY (!m_session->monitor() || !State::monitorState()->contains(m_session->monitor())) {
         LOGM(Log::ERR, "Client requested sharing of a monitor that is gone");
         m_failed = true;
         return ERROR_STOPPED;
@@ -120,8 +121,10 @@ eScreenshareError CScreenshareFrame::share(SP<IHLBuffer> buffer, const CRegion& 
 
     // schedule a frame so that when a screenshare starts it isn't black until the output is updated
     if (m_isFirst) {
-        g_pCompositor->scheduleFrameForMonitor(m_session->monitor(), Aquamarine::IOutput::AQ_SCHEDULE_NEEDS_FRAME);
-        g_pHyprRenderer->damageMonitor(m_session->monitor());
+        const auto PMONITOR = m_session->monitor();
+        if (PMONITOR)
+            PMONITOR->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_NEEDS_FRAME);
+        g_pHyprRenderer->damageMonitor(PMONITOR);
     }
 
     // TODO: add a damage ring for output damage since last shared frame

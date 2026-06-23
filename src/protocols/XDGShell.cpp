@@ -5,7 +5,7 @@
 #include "../managers/SeatManager.hpp"
 #include "../managers/ANRManager.hpp"
 #include "../managers/eventLoop/EventLoopManager.hpp"
-#include "../helpers/Monitor.hpp"
+#include "../output/Monitor.hpp"
 #include "core/Seat.hpp"
 #include "core/Compositor.hpp"
 #include "../desktop/DesktopTypes.hpp"
@@ -644,7 +644,7 @@ CBox CXDGPositionerRules::getPosition(CBox constraint, const Vector2D& parentCoo
         if (effectiveX2 > constraint.extent().x)
             width -= effectiveX2 - constraint.extent().x;
 
-        return std::make_pair(effectiveX, width);
+        return std::pair{effectiveX, width};
     };
 
     auto calcRemainingHeight = [&](double effectiveY) {
@@ -659,7 +659,7 @@ CBox CXDGPositionerRules::getPosition(CBox constraint, const Vector2D& parentCoo
         if (effectiveY2 > constraint.extent().y)
             height -= effectiveY2 - constraint.extent().y;
 
-        return std::make_pair(effectiveY, height);
+        return std::pair{effectiveY, height};
     };
 
     auto effectiveX = calcEffectiveX(gravity, anchorX);

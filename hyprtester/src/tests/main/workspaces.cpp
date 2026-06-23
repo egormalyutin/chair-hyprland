@@ -1,14 +1,9 @@
 #include "tests.hpp"
 #include "../../shared.hpp"
 #include "../../hyprctlCompat.hpp"
-#include <print>
-#include <thread>
-#include <chrono>
 #include <hyprutils/os/Process.hpp>
 #include <hyprutils/memory/WeakPtr.hpp>
 #include <hyprutils/utils/ScopeGuard.hpp>
-#include <csignal>
-#include <cerrno>
 #include "../shared.hpp"
 
 using namespace Hyprutils::OS;
@@ -538,7 +533,7 @@ TEST_CASE(workspacesCombined) {
 
     // add a new monitor
     NLog::log("{}Adding a new monitor", Colors::YELLOW);
-    ASSERT(getFromSocket("/output create headless"), "ok");
+    ASSERT(getFromSocket("/output create headless HEADLESS-3"), "ok");
 
     // should take workspace 2
     {

@@ -1,10 +1,10 @@
 #include "LuaMonitor.hpp"
 #include "LuaWorkspace.hpp"
+#include "../../../state/WorkspaceState.hpp"
 #include "LuaObjectHelpers.hpp"
 
 #include "../bindings/LuaBindingsInternal.hpp"
-
-#include "../../../helpers/Monitor.hpp"
+#include "../../../output/Monitor.hpp"
 #include "../../../desktop/state/FocusState.hpp"
 
 #include <string_view>
@@ -42,7 +42,7 @@ static int monitorSetWorkspace(lua_State* L) {
     if (id.empty())
         return 0;
 
-    auto ws = g_pCompositor->getWorkspaceByName(id);
+    auto ws = State::workspaceState()->query().name(id).run();
     if (!ws)
         return 0;
 
@@ -60,7 +60,7 @@ static int monitorSetSpecialWorkspace(lua_State* L) {
         return 0;
     }
 
-    auto ws = g_pCompositor->getWorkspaceByName(*id);
+    auto ws = State::workspaceState()->query().name(*id).run();
     if (!ws)
         return 0;
 

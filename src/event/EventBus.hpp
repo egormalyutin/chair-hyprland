@@ -79,6 +79,7 @@ namespace Event {
                 Event<PHLWINDOW>                        class_;
                 Event<PHLWINDOW>                        pin;
                 Event<PHLWINDOW>                        fullscreen;
+                Event<PHLWINDOW>                        floating;
                 Event<PHLWINDOW>                        updateRules;
                 Event<PHLWINDOW, PHLWORKSPACE>          moveToWorkspace;
             } window;
@@ -142,11 +143,13 @@ namespace Event {
             } gesture;
 
             struct {
-                Event<PHLMONITOR> newMon;
+                Event<PHLMONITOR> newMon;     // new monitor
+                Event<PHLMONITOR> destroyMon; // monitor hard removed
+
                 Event<PHLMONITOR> preAdded;
-                Event<PHLMONITOR> added;
+                Event<PHLMONITOR> added; // connected (enabled)
                 Event<PHLMONITOR> preRemoved;
-                Event<PHLMONITOR> removed;
+                Event<PHLMONITOR> removed; // disconnected (disabled)
                 Event<PHLMONITOR> preCommit;
                 Event<PHLMONITOR> focused;
 
@@ -162,8 +165,9 @@ namespace Event {
             } workspace;
 
             struct {
-                Event<> preReload;
-                Event<> reloaded;
+                Event<>           preReload;
+                Event<>           reloaded;
+                Event<const bool> props_refreshed;
             } config;
 
             struct {

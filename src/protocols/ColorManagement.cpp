@@ -1,7 +1,7 @@
 #include "ColorManagement.hpp"
 #include "Compositor.hpp"
 #include "color-management-v1.hpp"
-#include "../helpers/Monitor.hpp"
+#include "../output/Monitor.hpp"
 #include "core/Output.hpp"
 #include "../helpers/cm/ColorManagement.hpp"
 #include <cstdint>
@@ -269,11 +269,11 @@ CColorManagementSurface::CColorManagementSurface(SP<CWpColorManagementSurfaceV1>
     m_imageDescription = getDefaultImageDescription();
 
     m_resource->setDestroy([this](CWpColorManagementSurfaceV1* r) {
-        LOGM(Log::TRACE, "Destroy wp cm surface {}", (uintptr_t)m_surface);
+        LOGM(Log::TRACE, "Destroy wp cm surface {}", (uintptr_t)m_surface.get());
         PROTO::colorManagement->destroyResource(this);
     });
     m_resource->setOnDestroy([this](CWpColorManagementSurfaceV1* r) {
-        LOGM(Log::TRACE, "Destroy wp cm surface {}", (uintptr_t)m_surface);
+        LOGM(Log::TRACE, "Destroy wp cm surface {}", (uintptr_t)m_surface.get());
         PROTO::colorManagement->destroyResource(this);
     });
 
@@ -370,11 +370,11 @@ CColorManagementFeedbackSurface::CColorManagementFeedbackSurface(SP<CWpColorMana
     m_client = m_resource->client();
 
     m_resource->setDestroy([this](CWpColorManagementSurfaceFeedbackV1* r) {
-        LOGM(Log::TRACE, "Destroy wp cm feedback surface {}", (uintptr_t)m_surface);
+        LOGM(Log::TRACE, "Destroy wp cm feedback surface {}", (uintptr_t)m_surface.get());
         PROTO::colorManagement->destroyResource(this);
     });
     m_resource->setOnDestroy([this](CWpColorManagementSurfaceFeedbackV1* r) {
-        LOGM(Log::TRACE, "Destroy wp cm feedback surface {}", (uintptr_t)m_surface);
+        LOGM(Log::TRACE, "Destroy wp cm feedback surface {}", (uintptr_t)m_surface.get());
         PROTO::colorManagement->destroyResource(this);
     });
 
@@ -871,7 +871,7 @@ void CColorManagementProtocol::onImagePreferredChanged(uint32_t preferredId) {
     }
 }
 
-void CColorManagementProtocol::onMonitorImageDescriptionChanged(WP<CMonitor> monitor) {
+void CColorManagementProtocol::onMonitorImageDescriptionChanged(PHLMONITORREF monitor) {
     for (auto const& output : m_outputs) {
         if (output->m_output && output->m_output->m_monitor == monitor)
             output->m_resource->sendImageDescriptionChanged();

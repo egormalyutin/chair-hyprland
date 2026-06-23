@@ -24,7 +24,11 @@
 #include "../../desktop/rule/layerRule/LayerRule.hpp"
 #include "../../debug/HyprCtl.hpp"
 #include "../../layout/LayoutManager.hpp"
-
+#include "../../desktop/state/FocusState.hpp"
+#include "../../layout/space/Space.hpp"
+#include "../../layout/supplementary/WorkspaceAlgoMatcher.hpp"
+#include "../../state/MonitorState.hpp"
+#include "../../state/WorkspaceState.hpp"
 #include "../../render/Renderer.hpp"
 #include "../../errorOverlay/Overlay.hpp"
 #include "../../managers/input/InputManager.hpp"
@@ -72,6 +76,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <numbers>
 #include <ranges>
 #include <unordered_set>
 #include <hyprutils/string/String.hpp>
@@ -111,7 +116,7 @@ static Hyprlang::CParseResult configHandleGradientSet(const char* VALUE, void** 
         if (var.find("deg") != std::string::npos) {
             // last arg
             try {
-                DATA->m_angle = std::stoi(std::string(var.substr(0, var.find("deg")))) * (PI / 180.0); // radians
+                DATA->m_angle = std::stoi(std::string(var.substr(0, var.find("deg")))) * (std::numbers::pi / 180.0); // radians
             } catch (...) {
                 Log::logger->log(Log::WARN, "Error parsing gradient {}", V);
                 parseError = "Error parsing gradient " + V;
@@ -1017,7 +1022,7 @@ void CConfigManager::postConfigReload(const Hyprlang::CParseResult& result) {
 #endif
 
     // Updates dynamic window and workspace rules
-    for (auto const& w : g_pCompositor->getWorkspaces()) {
+    for (auto const& w : State::workspaceState()->workspaces()) {
         if (w->inert())
             continue;
         w->updateWindows();
@@ -1044,11 +1049,11 @@ void CConfigManager::postConfigReload(const Hyprlang::CParseResult& result) {
                          "Further logs will be written to {}",
                          g_pCompositor->m_instancePath + (ISDEBUG ? "/hyprlandd.log" : "/hyprland.log"));
 
-    for (auto const& m : g_pCompositor->m_monitors) {
+    for (auto const& m : State::monitorState()->monitors()) {
         // mark blur dirty
         m->m_blurFBDirty = true;
 
-        g_pCompositor->scheduleFrameForMonitor(m);
+        m->scheduleFrame();
 
         // Force the compositor to fully re-render all monitors
         m->m_forceFullFrames = 2;
@@ -1085,7 +1090,7 @@ std::string CConfigManager::parseKeyword(const std::string& COMMAND, const std::
 
     // invalidate layouts if they changed
     if (COMMAND == "monitor" || COMMAND.contains("gaps_") || COMMAND.starts_with("dwindle:") || COMMAND.starts_with("master:")) {
-        for (auto const& m : g_pCompositor->m_monitors) {
+        for (auto const& m : State::monitorState()->monitors()) {
             g_layoutManager->recalculateMonitor(m);
         }
     }

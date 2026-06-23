@@ -1,10 +1,12 @@
 #include "LayoutManager.hpp"
 
+#include "managers/EventManager.hpp"
 #include "space/Space.hpp"
 #include "target/Target.hpp"
 
-#include "../helpers/Monitor.hpp"
+#include "../output/Monitor.hpp"
 #include "../Compositor.hpp"
+#include "../state/WorkspaceState.hpp"
 #include "../desktop/state/FocusState.hpp"
 #include "../desktop/view/Group.hpp"
 #include "../event/EventBus.hpp"
@@ -30,6 +32,12 @@ void CLayoutManager::changeFloatingMode(SP<ITarget> target) {
         return;
 
     target->space()->toggleTargetFloating(target);
+
+    g_pEventManager->postEvent(SHyprIPCEvent({
+        .event = "changefloatingmode",
+        .data  = std::format("{:x},{}", rc<uintptr_t>(target->window().get()), sc<int>(target->floating())),
+    }));
+    Event::bus()->m_events.window.floating.emit(target->window());
 }
 
 void CLayoutManager::beginDragTarget(SP<ITarget> target, eMouseBindMode mode) {
@@ -343,7 +351,7 @@ void CLayoutManager::recalculateMonitor(PHLMONITOR m, eRecalculateMonitorReason 
 }
 
 void CLayoutManager::invalidateMonitorGeometries(PHLMONITOR m) {
-    for (const auto& ws : g_pCompositor->getWorkspaces()) {
+    for (const auto& ws : State::workspaceState()->workspaces()) {
         if (ws && ws->m_monitor == m) {
             ws->m_space->recheckWorkArea();
             ws->m_space->recalculate(RECALCULATE_REASON_INVALIDATE_MONITOR_GEOMETRIES);

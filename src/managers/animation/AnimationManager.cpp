@@ -11,6 +11,7 @@
 #include "../../helpers/varlist/VarList.hpp"
 #include "../../render/Renderer.hpp"
 #include "../../event/EventBus.hpp"
+#include "../../state/MonitorState.hpp"
 
 #include <hyprgraphics/color/Color.hpp>
 #include <hyprutils/animation/AnimatedVariable.hpp>
@@ -134,7 +135,7 @@ static void handleUpdate(CAnimatedVariable<VarType>& av, bool warp) {
         if (!ws->m_monitor.lock())
             return;
     } else if (auto ls = av.m_Context.pLayer.lock()) {
-        if (!g_pCompositor->getMonitorFromVector(ls->m_realPosition->goal() + ls->m_realSize->goal() / 2.F))
+        if (!State::monitorState()->query().vec(ls->m_realPosition->goal() + ls->m_realSize->goal() / 2.F).run())
             return;
         animationsDisabled = animationsDisabled || ls->m_ruleApplicator->noanim().valueOrDefault();
     }
@@ -225,7 +226,7 @@ void CHyprAnimationManager::tick() {
                 }
             }
             if (!owner) {
-                auto monitor = g_pCompositor->getMonitorFromVector(ls->m_realPosition->goal() + ls->m_realSize->goal() / 2.F);
+                auto monitor = State::monitorState()->query().vec(ls->m_realPosition->goal() + ls->m_realSize->goal() / 2.F).run();
                 if (!monitor)
                     continue;
                 owners.emplace_back(SDamageOwner{.layer = ls, .monitor = monitor});
@@ -323,7 +324,7 @@ void CHyprAnimationManager::tick() {
         }
 
         if (!owner.monitor->inFullscreenMode())
-            g_pCompositor->scheduleFrameForMonitor(owner.monitor, Aquamarine::IOutput::AQ_SCHEDULE_ANIMATION);
+            owner.monitor->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_ANIMATION);
     }
 
     tickDone();
@@ -335,8 +336,7 @@ void CHyprAnimationManager::frameTick() {
     if (!shouldTickForNext())
         return;
 
-    if UNLIKELY (!g_pCompositor->m_sessionActive || g_pCompositor->m_unsafeState ||
-                 !std::ranges::any_of(g_pCompositor->m_monitors, [](const auto& mon) { return mon->m_enabled && mon->m_output; }))
+    if UNLIKELY (!g_pCompositor->m_sessionActive || !std::ranges::any_of(State::monitorState()->monitors(), [](const auto& mon) { return mon->m_enabled && mon->m_output; }))
         return;
 
     if (!m_lastTickValid || m_lastTickTimer.getMillis() >= 1.0f) {
@@ -418,6 +418,10 @@ std::string CHyprAnimationManager::styleValidInConfigVar(const std::string& conf
 
         return "unknown style";
     } else if (config == "borderangle") {
+        if (style == "loop" || style == "once")
+            return "";
+        return "unknown style";
+    } else if (config == "shadowangle") {
         if (style == "loop" || style == "once")
             return "";
         return "unknown style";

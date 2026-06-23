@@ -4,8 +4,7 @@
 #include "XDGShell.hpp"
 #include "core/Compositor.hpp"
 #include "core/Output.hpp"
-#include "../helpers/Monitor.hpp"
-#include "wlr-layer-shell-unstable-v1.hpp"
+#include "../output/Monitor.hpp"
 
 void CLayerShellResource::SState::reset() {
     anchor        = 0;
@@ -45,7 +44,7 @@ CLayerShellResource::CLayerShellResource(SP<CZwlrLayerSurfaceV1> resource_, SP<C
         m_current           = m_pending;
         m_pending.committed = 0;
 
-        bool attachedBuffer = m_surface->m_current.texture;
+        bool attachedBuffer = !!m_surface->m_current.texture;
 
         if (attachedBuffer && !m_configured) {
             m_surface->error(-1, "layerSurface was not configured, but a buffer was attached");

@@ -21,6 +21,7 @@
 #include "../helpers/time/Time.hpp"
 #include "../helpers/Drm.hpp"
 #include "../event/EventBus.hpp"
+#include "../state/MonitorState.hpp"
 #include <climits>
 #include <cstring>
 #include <gbm.h>
@@ -236,7 +237,7 @@ void CPointerManager::resetCursorImage(bool apply) {
     damageIfSoftware();
 
     if (m_currentCursorImage.surface) {
-        for (auto const& m : g_pCompositor->m_monitors) {
+        for (auto const& m : State::monitorState()->monitors()) {
             m_currentCursorImage.surface->resource()->leave(m);
         }
 
@@ -283,7 +284,7 @@ void CPointerManager::resetCursorImage(bool apply) {
 void CPointerManager::updateCursorBackend() {
     const auto CURSORBOX = getCursorBoxGlobal();
 
-    for (auto const& m : g_pCompositor->m_monitors) {
+    for (auto const& m : State::monitorState()->monitors()) {
         if (!m->m_enabled || !m->m_dpmsStatus) {
             Log::logger->log(Log::TRACE, "Not updating hw cursors: disabled / dpms off display");
             continue;
@@ -322,7 +323,7 @@ void CPointerManager::onCursorMoved() {
     const auto CURSORBOX = getCursorBoxGlobal();
     bool       recalc    = false;
 
-    for (auto const& m : g_pCompositor->m_monitors) {
+    for (auto const& m : State::monitorState()->monitors()) {
         auto state = stateFor(m);
 
         state->box = getCursorBoxLogicalForMonitor(state->monitor.lock());
@@ -407,7 +408,7 @@ bool CPointerManager::setHWCursorBuffer(SP<SMonitorPointerState> state, SP<Aquam
     state->cursorFrontBuffer = buf;
 
     if (!state->monitor->shouldSkipScheduleFrameOnMouseEvent())
-        g_pCompositor->scheduleFrameForMonitor(state->monitor.lock(), Aquamarine::IOutput::AQ_SCHEDULE_CURSOR_SHAPE);
+        state->monitor->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_CURSOR_SHAPE);
 
     state->monitor->m_scanoutNeedsCursorUpdate = true;
 
@@ -765,9 +766,6 @@ Vector2D CPointerManager::closestValid(const Vector2D& pos) {
 }
 
 void CPointerManager::damageIfSoftware() {
-    if (g_pCompositor->m_unsafeState)
-        return;
-
     auto b = getCursorBoxGlobal().expand(4);
 
     for (auto const& mw : m_monitorStates) {
@@ -809,7 +807,7 @@ void CPointerManager::move(const Vector2D& deltaLogical) {
 }
 
 void CPointerManager::warpAbsolute(Vector2D abs, SP<IHID> dev) {
-    if (!dev)
+    if (!dev || State::monitorState()->monitors().empty())
         return;
 
     if (!std::isnan(abs.x))
@@ -818,7 +816,7 @@ void CPointerManager::warpAbsolute(Vector2D abs, SP<IHID> dev) {
         abs.y = std::clamp(abs.y, 0.0, 1.0);
 
     // find x and y size of the entire space
-    const auto& MONITORS = g_pCompositor->m_monitors;
+    const auto& MONITORS = State::monitorState()->monitors();
     Vector2D    topLeft = MONITORS.at(0)->m_position, bottomRight = MONITORS.at(0)->m_position + MONITORS.at(0)->m_size;
     for (size_t i = 1; i < MONITORS.size(); ++i) {
         const auto EXTENT = MONITORS[i]->logicalBox().extent();
@@ -838,7 +836,7 @@ void CPointerManager::warpAbsolute(Vector2D abs, SP<IHID> dev) {
         if (output == "current") {
             if (const auto PLASTMONITOR = Desktop::focusState()->monitor(); PLASTMONITOR)
                 return PLASTMONITOR->logicalBox();
-        } else if (const auto PMONITOR = g_pCompositor->getMonitorFromString(output); PMONITOR)
+        } else if (const auto PMONITOR = State::monitorState()->query().relativeTo(Desktop::focusState()->monitor()).configString(output).run(); PMONITOR)
             return PMONITOR->logicalBox();
         return mappedArea;
     };
@@ -892,7 +890,7 @@ void CPointerManager::warpAbsolute(Vector2D abs, SP<IHID> dev) {
 
 void CPointerManager::onMonitorLayoutChange() {
     m_currentMonitorLayout.monitorBoxes.clear();
-    for (auto const& m : g_pCompositor->m_monitors) {
+    for (auto const& m : State::monitorState()->monitors()) {
         if (m->isMirror() || !m->m_enabled || !m->m_output)
             continue;
 

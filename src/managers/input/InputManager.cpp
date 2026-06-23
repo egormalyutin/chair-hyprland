@@ -38,6 +38,7 @@
 #include "../../render/Renderer.hpp"
 #include "../../managers/EventManager.hpp"
 #include "../../managers/permissions/DynamicPermissionManager.hpp"
+#include "../../state/MonitorState.hpp"
 
 #include "../../helpers/time/Time.hpp"
 #include "../../helpers/MiscFunctions.hpp"
@@ -165,6 +166,8 @@ void CInputManager::onMouseWarp(IPointer::SMotionAbsoluteEvent e) {
 
     m_lastInputTouch  = false;
     m_lastInputTablet = false;
+
+    g_pSeatManager->sendPointerFrame();
 }
 
 void CInputManager::simulateMouseMovement() {
@@ -214,7 +217,7 @@ void CInputManager::sendMotionEventsToFocused() {
 void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, std::optional<Vector2D> overridePos) {
     m_lastInputMouse = mouse;
 
-    if (!g_pCompositor->m_readyToProcess || g_pCompositor->m_isShuttingDown || g_pCompositor->m_unsafeState)
+    if (g_pCompositor->m_isShuttingDown)
         return;
 
     Vector2D const mouseCoords        = overridePos.value_or(getMouseCoordsInternal());
@@ -257,7 +260,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
     m_lastCursorPosFloored = MOUSECOORDSFLOORED;
 
     // use mouseCoords specifically in case touch sent overridePos, otherwise touch doesn't work on non-focused monitor
-    const auto PMONITOR = isLocked() && Desktop::focusState()->monitor() ? Desktop::focusState()->monitor() : g_pCompositor->getMonitorFromVector(mouseCoords);
+    const auto PMONITOR = isLocked() && Desktop::focusState()->monitor() ? Desktop::focusState()->monitor() : State::monitorState()->query().vec(mouseCoords).run();
 
     // this can happen if there are no displays hooked up to Hyprland
     if (PMONITOR == nullptr)
@@ -272,7 +275,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
     const auto self     = PMONITOR->m_self.lock();
 
     if (!solitary && g_pHyprRenderer->shouldRenderCursor() && g_pPointerManager->softwareLockedFor(self) && !skipFrameSchedule)
-        g_pCompositor->scheduleFrameForMonitor(PMONITOR, Aquamarine::IOutput::AQ_SCHEDULE_CURSOR_MOVE);
+        PMONITOR->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_CURSOR_MOVE);
 
     // constraints
     auto confineToRegion = [&](const CRegion& rg, SP<Desktop::View::CWLSurface> surf) {
@@ -560,8 +563,10 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
     if (!foundSurface)
         foundSurface = g_pCompositor->vectorToLayerSurface(mouseCoords, &PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_BACKGROUND], &surfaceCoords, &pFoundLayerSurface);
 
-    if (g_pPointerManager->softwareLockedFor(self) > 0 && !skipFrameSchedule)
-        g_pCompositor->scheduleFrameForMonitor(Desktop::focusState()->monitor(), Aquamarine::IOutput::AQ_SCHEDULE_CURSOR_MOVE);
+    if (g_pPointerManager->softwareLockedFor(self) > 0 && !skipFrameSchedule) {
+        if (const auto PMONITOR = Desktop::focusState()->monitor())
+            PMONITOR->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_CURSOR_MOVE);
+    }
 
     // FIXME: This will be disabled during DnD operations because we do not exactly follow the spec
     // xdg-popup grabs should be keyboard-only, while they are absolute in our case...
@@ -621,7 +626,7 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
         m_foundSurfaceToFocus = foundSurface;
     }
 
-    if (g_layoutManager->dragController()->target() && pFoundWindow != g_layoutManager->dragController()->target()) {
+    if (g_layoutManager->dragController()->target() && (!pFoundWindow || pFoundWindow->layoutTarget() != g_layoutManager->dragController()->target())) {
         g_pSeatManager->setPointerFocus(foundSurface, surfaceLocal);
         return;
     }
@@ -896,7 +901,7 @@ void CInputManager::processMouseDownNormal(const IPointer::SButtonEvent& e, SP<I
     // notify app if we didn't handle it
     g_pSeatManager->sendPointerButton(e.timeMs, e.button, e.state);
 
-    if (const auto PMON = g_pCompositor->getMonitorFromVector(mouseCoords); PMON != Desktop::focusState()->monitor() && PMON)
+    if (const auto PMON = State::monitorState()->query().vec(mouseCoords).run(); PMON != Desktop::focusState()->monitor() && PMON)
         Desktop::focusState()->rawMonitorFocus(PMON);
 
     if (g_pSeatManager->m_seatGrab && e.state == WL_POINTER_BUTTON_STATE_PRESSED) {
@@ -1924,7 +1929,7 @@ void CInputManager::setTouchDeviceConfigs(SP<ITouch> dev) {
                 // }
             }
             PTOUCHDEV->m_boundOutput = bound ? output : "";
-            const auto PMONITOR      = bound ? g_pCompositor->getMonitorFromName(output) : nullptr;
+            const auto PMONITOR      = bound ? State::monitorState()->query().name(output).run() : nullptr;
             if (PMONITOR) {
                 Log::logger->log(Log::DEBUG, "Binding touch device {} to output {}", PTOUCHDEV->m_hlName, PMONITOR->m_name);
                 // wlr_cursor_map_input_to_output(g_pCompositor->m_sWLRCursor, &PTOUCHDEV->wlr()->base, PMONITOR->output);

@@ -7,6 +7,7 @@
 #include "../../desktop/state/FocusState.hpp"
 #include "../../desktop/view/Group.hpp"
 #include "../../render/Renderer.hpp"
+#include "../../state/MonitorState.hpp"
 
 using namespace Layout;
 using namespace Layout::Supplementary;
@@ -257,7 +258,7 @@ void CDragStateController::mouseMove(const Vector2D& mousePos) {
 
     const auto  TIMERDELTA    = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - TIMER).count();
     const auto  MSDELTA       = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::high_resolution_clock::now() - MSTIMER).count();
-    const auto  MSMONITOR     = 1000.0 / g_pHyprRenderer->m_mostHzMonitor->m_refreshRate;
+    const auto  MSMONITOR     = 1000.0 / (g_pHyprRenderer->m_mostHzMonitor ? g_pHyprRenderer->m_mostHzMonitor->m_refreshRate : 60.0);
     static int  totalMs       = 0;
     bool        canSkipUpdate = true;
 
@@ -376,7 +377,7 @@ void CDragStateController::mouseMove(const Vector2D& mousePos) {
     Vector2D middle = DRAGGINGTARGET->position().middle();
 
     // and check its monitor
-    const auto PMONITOR = g_pCompositor->getMonitorFromVector(middle);
+    const auto PMONITOR = State::monitorState()->query().vec(middle).run();
 
     if (PMONITOR && PMONITOR->m_activeWorkspace && DRAGGINGTARGET->floating() /* If we're resaizing a tiled target, don't do this */) {
         const auto WS = PMONITOR->m_activeSpecialWorkspace ? PMONITOR->m_activeSpecialWorkspace : PMONITOR->m_activeWorkspace;

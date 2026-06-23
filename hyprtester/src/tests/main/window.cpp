@@ -1,18 +1,19 @@
 #include <unistd.h>
 #include <cmath>
 #include <chrono>
-#include <cstdlib>
-#include <cstring>
 #include <filesystem>
 #include <thread>
 #include <hyprutils/os/Process.hpp>
 #include <hyprutils/memory/WeakPtr.hpp>
 #include <hyprutils/string/VarList2.hpp>
+#include <hyprutils/utils/ScopeGuard.hpp>
 
 #include "../../shared.hpp"
 #include "../../hyprctlCompat.hpp"
 #include "../shared.hpp"
 #include "tests.hpp"
+
+using namespace Hyprutils::Utils;
 
 // TODO: seems redundant, can just use `Tests::spawnKitty`?
 static bool spawnKitty(const std::string& class_, const std::vector<std::string>& args = {}) {
@@ -629,6 +630,34 @@ TEST_CASE(specialFloatRecenters) {
     OK(getFromSocket("/dispatch hl.dsp.workspace.toggle_special('recenter')"));
     Tests::killAllWindows();
     ASSERT(Tests::windowCount(), 0);
+}
+
+TEST_CASE(exactWindowSelectors) {
+    if (!spawnKitty("kitty_A"))
+        FAIL_TEST("Could not spawn kitty");
+    if (!spawnKitty("kitty_B"))
+        FAIL_TEST("Could not spawn kitty");
+
+    getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_B' })");
+    auto target    = getFromSocket("/activewindow");
+    auto addr      = getWindowAddress(target);
+    auto pid       = Tests::getAttribute(target, "pid");
+    auto stable_id = Tests::getAttribute(target, "stableID");
+
+    getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_A' })");
+    // Focus window by address
+    OK(getFromSocket(std::format("/dispatch hl.dsp.focus({{ window = 'address:0x{}' }})", addr)));
+    EXPECT_CONTAINS(getFromSocket("/activewindow"), "class: kitty_B");
+
+    getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_A' })");
+    // Focus window by PID
+    OK(getFromSocket(std::format("/dispatch hl.dsp.focus({{ window = 'pid:{}' }})", pid)));
+    EXPECT_CONTAINS(getFromSocket("/activewindow"), "class: kitty_B");
+
+    getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty_A' })");
+    // Focus window by stable ID
+    OK(getFromSocket(std::format("/dispatch hl.dsp.focus({{ window = 'stableid:{}' }})", stable_id)));
+    EXPECT_CONTAINS(getFromSocket("/activewindow"), "class: kitty_B");
 }
 
 // TODO: decompose this into multiple test cases
@@ -1262,6 +1291,8 @@ TEST_CASE(pinnedRetainsPositionOnWorkspaceChange) {
 
 TEST_CASE(monitorrule) {
     OK(getFromSocket("/output create headless HEADLESS-3"));
+    CScopeGuard guard([&] { OK(getFromSocket("/output remove HEADLESS-3")); });
+
     OK(getFromSocket("/dispatch hl.dsp.focus({ monitor = 'HEADLESS-2' })"));
     OK(getFromSocket("/eval hl.window_rule({ name = 'monitorrule', match = { class = 'monitor_kitty' }, monitor = 'HEADLESS-3' })"));
 
@@ -1280,6 +1311,52 @@ TEST_CASE(monitorrule) {
     ASSERT(Tests::windowCount(), 1);
     EXPECT_CONTAINS(getFromSocket("/clients"), "monitor: 2");
     EXPECT_CONTAINS(getFromSocket("/activeworkspace"), "HEADLESS-2");
+}
 
-    OK(getFromSocket("/output remove HEADLESS-3"));
+TEST_CASE(mouseResize) {
+#define RESET_WINDOW()                                                                                                                                                             \
+    OK(getFromSocket("r/reload"));                                                                                                                                                 \
+    OK(getFromSocket("r/eval hl.unbind('mouse:273')"));                                                                                                                            \
+    OK(getFromSocket("/dispatch hl.dsp.window.resize({ x = 640, y = 400, window = 'class:kitty' })"));                                                                             \
+    OK(getFromSocket("/dispatch hl.dsp.window.move({ x = 0, y = 0, window = 'class:kitty' })"));                                                                                   \
+    OK(getFromSocket("/dispatch hl.dsp.cursor.move({ x = 640, y = 400 })"));                                                                                                       \
+    EXPECT_CONTAINS(getFromSocket("/clients"), "size: 640,400");                                                                                                                   \
+    EXPECT_CONTAINS(getFromSocket("/clients"), "at: 0,0");
+
+    OK(getFromSocket("/eval hl.window_rule({ match = { class = 'kitty' }, float = true })"));
+    Tests::spawnKitty();
+    ASSERT(Tests::windowCount(), 1);
+    OK(getFromSocket("/dispatch hl.dsp.focus({ window = 'class:kitty' })"));
+
+    RESET_WINDOW();
+    OK(getFromSocket("r/eval hl.bind('mouse:273', hl.dsp.window.resize(), { mouse = true })"));
+    OK(getFromSocket("/eval hl.plugin.test.click(273, 1)"));
+
+    // Position setting works immediately, but updating window sizes interactively doesn't.
+    for (size_t i = 0; i < 50; i++) {
+        OK(getFromSocket("/dispatch hl.dsp.cursor.move({ x = 700, y = 200 })"));
+        if (getFromSocket("/clients").contains("size: 700,200")) {
+            break;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    }
+    OK(getFromSocket("/eval hl.plugin.test.click(273, 0)"));
+    EXPECT_CONTAINS(getFromSocket("/clients"), "size: 700,200");
+
+    RESET_WINDOW();
+    OK(getFromSocket("r/eval hl.bind('mouse:273', hl.dsp.window.resize({ keep_aspect_ratio = true }), { mouse = true })"));
+    OK(getFromSocket("/eval hl.plugin.test.click(273, 1)"));
+    OK(getFromSocket("/dispatch hl.dsp.cursor.move({ x = 1280, y = 100 })"));
+    OK(getFromSocket("/eval hl.plugin.test.click(273, 0)"));
+    EXPECT_CONTAINS(getFromSocket("/clients"), "size: 1280,800");
+
+    RESET_WINDOW();
+    OK(getFromSocket("/eval hl.window_rule({ match = { class = 'kitty' }, keep_aspect_ratio = true })"));
+    OK(getFromSocket("r/eval hl.bind('mouse:273', hl.dsp.window.resize({ keep_aspect_ratio = false }), { mouse = true })"));
+    OK(getFromSocket("/eval hl.plugin.test.click(273, 1)"));
+    OK(getFromSocket("/dispatch hl.dsp.cursor.move({ x = 700, y = 200 })"));
+    OK(getFromSocket("/eval hl.plugin.test.click(273, 0)"));
+    EXPECT_CONTAINS(getFromSocket("/clients"), "size: 700,200");
+#undef RESET_WINDOW
 }

@@ -33,7 +33,9 @@
 #include "../event/EventBus.hpp"
 #include "../helpers/CursorShapes.hpp"
 #include "../helpers/MainLoopExecutor.hpp"
-#include "../helpers/Monitor.hpp"
+#include "../output/Monitor.hpp"
+#include "../state/MonitorState.hpp"
+#include "../state/WorkspaceState.hpp"
 #include "macros.hpp"
 #include "pass/TexPassElement.hpp"
 #include "pass/ClearPassElement.hpp"
@@ -160,7 +162,7 @@ IHyprRenderer::IHyprRenderer() {
         g_pEventLoopManager->doLater([this]() {
             if (!ErrorOverlay::overlay()->active())
                 return;
-            for (auto& m : g_pCompositor->m_monitors) {
+            for (auto& m : State::monitorState()->monitors()) {
                 arrangeLayersForMonitor(m->m_id);
             }
         });
@@ -303,7 +305,7 @@ bool IHyprRenderer::shouldRenderWindow(PHLWINDOW pWindow) {
     if (PWORKSPACE && PWORKSPACE->isVisible())
         return true;
 
-    for (auto const& m : g_pCompositor->m_monitors) {
+    for (auto const& m : State::monitorState()->monitors()) {
         if (PWORKSPACE && PWORKSPACE->m_monitor == m && (PWORKSPACE->m_renderOffset->isBeingAnimated() || PWORKSPACE->m_alpha->isBeingAnimated()))
             return true;
 
@@ -1139,9 +1141,9 @@ void IHyprRenderer::renderAllClientsForWorkspace(PHLMONITOR pMonitor, PHLWORKSPA
 
     SRenderModifData RENDERMODIFDATA;
     if (translate != Vector2D{0, 0})
-        RENDERMODIFDATA.modifs.emplace_back(std::make_pair<>(SRenderModifData::eRenderModifType::RMOD_TYPE_TRANSLATE, translate));
+        RENDERMODIFDATA.modifs.emplace_back(SRenderModifData::eRenderModifType::RMOD_TYPE_TRANSLATE, translate);
     if UNLIKELY (scale != 1.f)
-        RENDERMODIFDATA.modifs.emplace_back(std::make_pair<>(SRenderModifData::eRenderModifType::RMOD_TYPE_SCALE, scale));
+        RENDERMODIFDATA.modifs.emplace_back(SRenderModifData::eRenderModifType::RMOD_TYPE_SCALE, scale);
 
     if UNLIKELY (!RENDERMODIFDATA.modifs.empty())
         m_renderPass.add(makeUnique<CRendererHintsPassElement>(CRendererHintsPassElement::SData{RENDERMODIFDATA}));
@@ -1235,7 +1237,7 @@ void IHyprRenderer::renderAllClientsForWorkspace(PHLMONITOR pMonitor, PHLWORKSPA
     }
 
     // special
-    for (auto const& ws : g_pCompositor->getWorkspaces()) {
+    for (auto const& ws : State::workspaceState()->workspaces()) {
         if (ws->m_alpha->value() <= 0.F || !ws->m_isSpecialWorkspace)
             continue;
 
@@ -1466,7 +1468,7 @@ void IHyprRenderer::requestBackgroundResource() {
 
     // doesn't have to be ASP as it's passed
     SP<CMainLoopExecutor> executor = makeShared<CMainLoopExecutor>([this] {
-        for (const auto& m : g_pCompositor->m_monitors) {
+        for (const auto& m : State::monitorState()->monitors()) {
             damageMonitor(m);
         }
     });
@@ -1588,21 +1590,17 @@ SP<ITexture> IHyprRenderer::renderText(const std::string& text, CHyprColor col, 
     const auto            FONTSIZE   = pt;
     const auto            COLOR      = col;
 
-    auto                  CAIROSURFACE = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, 1920, 1080 /* arbitrary, just for size */);
-    auto                  CAIRO        = cairo_create(CAIROSURFACE);
-
-    PangoLayout*          layoutText = pango_cairo_create_layout(CAIRO);
+    PangoFontMap*         fontMap    = pango_cairo_font_map_get_default();
+    PangoContext*         context    = pango_font_map_create_context(fontMap);
+    PangoLayout*          layoutText = pango_layout_new(context);
     PangoFontDescription* pangoFD    = pango_font_description_new();
+    g_object_unref(context);
 
     pango_font_description_set_family_static(pangoFD, FONTFAMILY.c_str());
     pango_font_description_set_absolute_size(pangoFD, FONTSIZE * PANGO_SCALE);
     pango_font_description_set_style(pangoFD, italic ? PANGO_STYLE_ITALIC : PANGO_STYLE_NORMAL);
     pango_font_description_set_weight(pangoFD, sc<PangoWeight>(weight));
     pango_layout_set_font_description(layoutText, pangoFD);
-
-    cairo_set_source_rgba(CAIRO, COLOR.r, COLOR.g, COLOR.b, COLOR.a);
-
-    int textW = 0, textH = 0;
     pango_layout_set_text(layoutText, text.c_str(), -1);
 
     if (maxWidth > 0) {
@@ -1612,29 +1610,13 @@ SP<ITexture> IHyprRenderer::renderText(const std::string& text, CHyprColor col, 
 
     PangoRectangle rectInk = {}, rectLog = {};
     pango_layout_get_pixel_extents(layoutText, &rectInk, &rectLog);
-    textW = std::max(rectLog.width, rectInk.x + rectInk.width);
-    textH = std::max(rectLog.height, rectInk.y + rectInk.height);
+    int  textW = std::max(rectLog.width, rectInk.x + rectInk.width);
+    int  textH = std::max(rectLog.height, rectInk.y + rectInk.height);
 
-    pango_font_description_free(pangoFD);
-    g_object_unref(layoutText);
-    cairo_destroy(CAIRO);
-    cairo_surface_destroy(CAIROSURFACE);
-
-    CAIROSURFACE = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, textW, textH);
-    CAIRO        = cairo_create(CAIROSURFACE);
-
-    layoutText = pango_cairo_create_layout(CAIRO);
-    pangoFD    = pango_font_description_new();
-
-    pango_font_description_set_family_static(pangoFD, FONTFAMILY.c_str());
-    pango_font_description_set_absolute_size(pangoFD, FONTSIZE * PANGO_SCALE);
-    pango_font_description_set_style(pangoFD, italic ? PANGO_STYLE_ITALIC : PANGO_STYLE_NORMAL);
-    pango_font_description_set_weight(pangoFD, sc<PangoWeight>(weight));
-    pango_layout_set_font_description(layoutText, pangoFD);
-    pango_layout_set_text(layoutText, text.c_str(), -1);
+    auto CAIROSURFACE = cairo_image_surface_create(CAIRO_FORMAT_ARGB32, textW, textH);
+    auto CAIRO        = cairo_create(CAIROSURFACE);
 
     cairo_set_source_rgba(CAIRO, COLOR.r, COLOR.g, COLOR.b, COLOR.a);
-
     cairo_move_to(CAIRO, 0, 0);
     pango_cairo_show_layout(CAIRO, layoutText);
 
@@ -1642,7 +1624,6 @@ SP<ITexture> IHyprRenderer::renderText(const std::string& text, CHyprColor col, 
     g_object_unref(layoutText);
 
     cairo_surface_flush(CAIROSURFACE);
-
     auto tex = createTexture(CAIROSURFACE);
 
     cairo_destroy(CAIRO);
@@ -1936,6 +1917,8 @@ SCMSettings IHyprRenderer::getCMSettings(const NColorManagement::PImageDescripti
     const auto                          sdrEOTF = NTransferFunction::fromConfig();
     NColorManagement::eTransferFunction srcTF;
 
+    const int                           tonemapMode = shouldUseSurface && m_renderData.currentWindow ? m_renderData.currentWindow->m_ruleApplicator->tonemap().valueOr(1) : 1;
+
     if (shouldUseSurface && m_renderData.surface.valid() &&
         (imageDescription->value().transferFunction == CM_TRANSFER_FUNCTION_GAMMA22 || imageDescription->value().transferFunction == CM_TRANSFER_FUNCTION_SRGB)) {
         if (m_renderData.surface->m_colorManagement.valid()) {
@@ -1966,7 +1949,9 @@ SCMSettings IHyprRenderer::getCMSettings(const NColorManagement::PImageDescripti
         ((m_renderData.pMonitor->m_sdrSaturation > 0 && m_renderData.pMonitor->m_sdrSaturation != 1.0f) ||
          (m_renderData.pMonitor->m_sdrBrightness > 0 && m_renderData.pMonitor->m_sdrBrightness != 1.0f));
 
-    auto result = SCMSettings{
+    const bool needsTonemap = maxLuminance >= dstMaxLuminance * 1.01;
+
+    auto       result = SCMSettings{
         .sourceTF        = srcTF,
         .targetTF        = targetImageDescription->value().transferFunction,
         .srcTFRange      = {.min = imageDescription->value().getTFMinLuminance(needsSDRmod ? sdrMinLuminance : -1),
@@ -1977,8 +1962,10 @@ SCMSettings IHyprRenderer::getCMSettings(const NColorManagement::PImageDescripti
         .dstRefLuminance = targetImageDescription->value().luminances.reference,
         .convertMatrix   = matrix.mat(),
 
-        .needsTonemap            = maxLuminance >= dstMaxLuminance * 1.01,
-        .maxLuminance            = maxLuminance * targetImageDescription->value().luminances.reference / imageDescription->value().luminances.reference,
+        .needsTonemap            = tonemapMode != 0 && needsTonemap,
+        .tonemapMode             = tonemapMode,
+        .maxLuminance            = needsTonemap && tonemapMode == 2 ? dstMaxLuminance :
+                                                                      maxLuminance * targetImageDescription->value().luminances.reference / imageDescription->value().luminances.reference,
         .dstMaxLuminance         = dstMaxLuminance,
         .dstPrimaries2XYZ        = toXYZ.mat(),
         .needsSDRmod             = needsMod,
@@ -2137,7 +2124,7 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
     }
 
     m_renderData.mouseZoomFactor = 1.f;
-    if (ZOOMFACTOR != 1.f && pMonitor == g_pCompositor->getMonitorFromCursor())
+    if (ZOOMFACTOR != 1.f && pMonitor == State::monitorState()->query().vec(g_pPointerManager->position()).run())
         m_renderData.mouseZoomFactor = std::clamp(ZOOMFACTOR, 1.f, INFINITY);
 
     if (pMonitor->m_zoomAnimProgress->value() != 1) {
@@ -2192,7 +2179,7 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
             }
 
             // for drawing the debug overlay
-            if (pMonitor == g_pCompositor->m_monitors.front() && *PDEBUGOVERLAY == 1) {
+            if (!State::monitorState()->monitors().empty() && pMonitor == State::monitorState()->monitors().front() && *PDEBUGOVERLAY == 1) {
                 renderStartOverlay = std::chrono::high_resolution_clock::now();
                 Debug::overlay()->draw();
                 endRenderOverlay = std::chrono::high_resolution_clock::now();
@@ -2211,7 +2198,8 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
             }
         }
     } else if (!pMonitor->isMirror()) {
-        sendFrameEventsToWorkspace(pMonitor, pMonitor->m_activeWorkspace, NOW);
+        if (pMonitor->m_activeWorkspace)
+            sendFrameEventsToWorkspace(pMonitor, pMonitor->m_activeWorkspace, NOW);
         if (pMonitor->m_activeSpecialWorkspace)
             sendFrameEventsToWorkspace(pMonitor, pMonitor->m_activeSpecialWorkspace, NOW);
     }
@@ -2270,7 +2258,7 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
         pMonitor->m_tearingState.busy = true;
 
     if (*PDAMAGEBLINK || *PVFR == 0 || pMonitor->m_pendingFrame)
-        g_pCompositor->scheduleFrameForMonitor(pMonitor, Aquamarine::IOutput::AQ_SCHEDULE_RENDER_MONITOR);
+        pMonitor->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_RENDER_MONITOR);
 
     pMonitor->m_pendingFrame = false;
 
@@ -2278,7 +2266,7 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
         const float durationUs = std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::high_resolution_clock::now() - renderStart).count() / 1000.f;
         Debug::overlay()->renderData(pMonitor, durationUs);
 
-        if (pMonitor == g_pCompositor->m_monitors.front()) {
+        if (pMonitor == State::monitorState()->monitors().front()) {
             const float noOverlayUs = durationUs - std::chrono::duration_cast<std::chrono::nanoseconds>(endRenderOverlay - renderStartOverlay).count() / 1000.f;
             Debug::overlay()->renderDataNoOverlay(pMonitor, noOverlayUs);
         } else
@@ -2288,7 +2276,7 @@ void IHyprRenderer::renderMonitor(PHLMONITOR pMonitor, bool commit) {
 
 static const hdr_output_metadata NO_HDR_METADATA = {.hdmi_metadata_type1 = hdr_metadata_infoframe{.eotf = 0}};
 
-static hdr_output_metadata       createHDRMetadata(SImageDescription settings, SP<CMonitor> monitor) {
+static hdr_output_metadata       createHDRMetadata(SImageDescription settings, PHLMONITOR monitor) {
     uint8_t eotf = 0;
     switch (settings.transferFunction) {
         case CM_TRANSFER_FUNCTION_GAMMA22:
@@ -2677,7 +2665,7 @@ void IHyprRenderer::arrangeLayerArray(PHLMONITOR pMonitor, const std::vector<PHL
 }
 
 void IHyprRenderer::arrangeLayersForMonitor(const MONITORID& monitor) {
-    const auto PMONITOR = g_pCompositor->getMonitorFromID(monitor);
+    const auto PMONITOR = State::monitorState()->query().id(monitor).run();
 
     if (!PMONITOR || PMONITOR->m_size.x <= 0 || PMONITOR->m_size.y <= 0)
         return;
@@ -2711,9 +2699,6 @@ void IHyprRenderer::damageSurface(SP<CWLSurfaceResource> pSurface, double x, dou
     if (!pSurface)
         return; // wut?
 
-    if (g_pCompositor->m_unsafeState)
-        return;
-
     const auto WLSURF = Desktop::View::CWLSurface::fromResource(pSurface);
     if (!WLSURF) {
         Log::logger->log(Log::ERR, "BUG THIS: No CWLSurface for surface in damageSurface!!!");
@@ -2724,12 +2709,12 @@ void IHyprRenderer::damageSurface(SP<CWLSurfaceResource> pSurface, double x, dou
     if (!WLSURF->resource()->m_current.callbacks.empty() && pSurface->m_hlSurface) {
         const auto BOX = pSurface->m_hlSurface->getSurfaceBoxGlobal();
         if (BOX && !BOX->empty()) {
-            for (auto const& m : g_pCompositor->m_monitors) {
+            for (auto const& m : State::monitorState()->monitors()) {
                 if (!m->m_output)
                     continue;
 
                 if (BOX->overlaps(m->logicalBox()))
-                    g_pCompositor->scheduleFrameForMonitor(m, Aquamarine::IOutput::AQ_SCHEDULE_NEEDS_FRAME);
+                    m->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_NEEDS_FRAME);
             }
         }
     }
@@ -2747,7 +2732,7 @@ void IHyprRenderer::damageSurface(SP<CWLSurfaceResource> pSurface, double x, dou
 
     CRegion    damageBoxForEach;
 
-    for (auto const& m : g_pCompositor->m_monitors) {
+    for (auto const& m : State::monitorState()->monitors()) {
         if (!m->m_output)
             continue;
         if (!EXTENTS.overlaps(m->logicalBox()))
@@ -2767,16 +2752,13 @@ void IHyprRenderer::damageSurface(SP<CWLSurfaceResource> pSurface, double x, dou
 }
 
 void IHyprRenderer::damageWindow(PHLWINDOW pWindow, bool forceFull) {
-    if (g_pCompositor->m_unsafeState)
-        return;
-
     CBox       windowBox        = pWindow->getFullWindowBoundingBox();
     const auto PWINDOWWORKSPACE = pWindow->m_workspace;
     if (PWINDOWWORKSPACE && PWINDOWWORKSPACE->m_renderOffset->isBeingAnimated() && !pWindow->m_pinned)
         windowBox.translate(PWINDOWWORKSPACE->m_renderOffset->value());
     windowBox.translate(pWindow->m_floatingOffset);
 
-    for (auto const& m : g_pCompositor->m_monitors) {
+    for (auto const& m : State::monitorState()->monitors()) {
         if (forceFull || shouldRenderWindow(pWindow, m)) { // only damage if window is rendered on monitor
             CBox fixedDamageBox = {windowBox.x - m->m_position.x, windowBox.y - m->m_position.y, windowBox.width, windowBox.height};
             fixedDamageBox.scale(m->m_scale);
@@ -2791,7 +2773,7 @@ void IHyprRenderer::damageWindow(PHLWINDOW pWindow, bool forceFull) {
 }
 
 void IHyprRenderer::damageMonitor(PHLMONITOR pMonitor) {
-    if (g_pCompositor->m_unsafeState || pMonitor->isMirror())
+    if (!pMonitor || pMonitor->isMirror())
         return;
 
     CBox damageBox = {0, 0, INT16_MAX, INT16_MAX};
@@ -2804,10 +2786,7 @@ void IHyprRenderer::damageMonitor(PHLMONITOR pMonitor) {
 }
 
 void IHyprRenderer::damageBox(const CBox& box, bool skipFrameSchedule) {
-    if (g_pCompositor->m_unsafeState)
-        return;
-
-    for (auto const& m : g_pCompositor->m_monitors) {
+    for (auto const& m : State::monitorState()->monitors()) {
         if (m->isMirror())
             continue; // don't damage mirrors traditionally
 
@@ -2852,7 +2831,8 @@ void IHyprRenderer::damageMirrorsWith(PHLMONITOR pMonitor, const CRegion& pRegio
 
         mirror->addDamage(transformed);
 
-        g_pCompositor->scheduleFrameForMonitor(mirror.lock(), Aquamarine::IOutput::AQ_SCHEDULE_DAMAGE);
+        if (auto m = mirror.lock())
+            m->scheduleFrame(Aquamarine::IOutput::AQ_SCHEDULE_DAMAGE);
     }
 }
 
@@ -2957,7 +2937,7 @@ void IHyprRenderer::ensureCursorRenderingMode() {
     else
         Log::logger->log(Log::DEBUG, "Showing the cursor (hl-mandated)");
 
-    for (auto const& m : g_pCompositor->m_monitors) {
+    for (auto const& m : State::monitorState()->monitors()) {
         if (!g_pPointerManager->softwareLockedFor(m))
             continue;
 
