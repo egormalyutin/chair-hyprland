@@ -22,6 +22,7 @@
 #include "./pass/TransformedWindowPassElement.hpp"
 #include "types.hpp"
 #include "../output/Monitor.hpp"
+#include "../desktop/state/Fadeout.hpp"
 #include "../desktop/view/LayerSurface.hpp"
 #include "Renderbuffer.hpp"
 #include "../helpers/time/Timer.hpp"
@@ -45,6 +46,9 @@ struct SSessionLockSurface;
 namespace Screenshare {
     class CScreenshareFrame;
 };
+namespace Pointer {
+    class CPointerManager;
+}
 
 namespace Render {
     using CScopeGuard = Hyprutils::Utils::CScopeGuard;
@@ -92,12 +96,10 @@ namespace Render {
         bool                                isSoftware();
         bool                                isMgpu();
         void                                addWindowToRenderUnfocused(PHLWINDOW window);
-        void                                makeSnapshot(PHLWINDOW);
-        void                                makeSnapshot(PHLLS);
-        void                                makeSnapshot(WP<Desktop::View::CPopup>);
-        void                                renderSnapshot(PHLWINDOW);
-        void                                renderSnapshot(PHLLS);
-        void                                renderSnapshot(WP<Desktop::View::CPopup>);
+        SP<IFramebuffer>                    makeSnapshotFB(PHLWINDOW);
+        SP<IFramebuffer>                    makeSnapshotFB(PHLLS);
+        SP<IFramebuffer>                    makeSnapshotFB(WP<Desktop::View::CPopup>);
+        void                                renderFadeouts(PHLMONITOR monitor, Desktop::eFadeoutPlane plane, PHLWORKSPACE workspace = nullptr);
         bool                                beginFullFakeRender(PHLMONITOR pMonitor, CRegion& damage, SP<IFramebuffer> fb);
         bool                                beginRenderToBuffer(PHLMONITOR pMonitor, CRegion& damage, SP<IHLBuffer> buffer, bool simple = false);
         virtual void                        startRenderPass() {};
@@ -186,6 +188,9 @@ namespace Render {
         virtual void                    drawShadow(const CBox& box, int round, float roundingPower, int range, const Config::CGradientValueData& color, float a) = 0;
         virtual void drawShadow(const CBox& box, int round, float roundingPower, int range, const Config::CGradientValueData& grad1, const Config::CGradientValueData& grad2,
                                 float lerp, float a)                                                                                                             = 0;
+        virtual void drawGlow(const CBox& box, int round, float roundingPower, int range, const Config::CGradientValueData& color, float a)                      = 0;
+        virtual void drawGlow(const CBox& box, int round, float roundingPower, int range, const Config::CGradientValueData& grad1, const Config::CGradientValueData& grad2,
+                              float lerp, float a)                                                                                                               = 0;
         virtual void setViewport(int x, int y, int width, int height)                                                                                            = 0;
 
         bool         preBlurQueued(PHLMONITORREF pMonitor);
@@ -245,6 +250,7 @@ namespace Render {
 
         SP<ITexture>                       m_lockDeadTexture;
         SP<ITexture>                       m_lockDead2Texture;
+        SP<ITexture>                       m_lockDead3Texture;
         SP<ITexture>                       m_lockTtyTextTexture;
         CRenderPass*                       m_currentPass             = nullptr;
         bool                               m_monitorTransformEnabled = false; // do not modify directly
@@ -255,9 +261,8 @@ namespace Render {
         // old private:
         void arrangeLayerArray(PHLMONITOR, const std::vector<PHLLSREF>&, bool, CBox*);
         void renderWorkspace(PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, const Time::steady_tp& now, const CBox& geometry);
-        void renderWorkspaceWindows(PHLMONITOR, PHLWORKSPACE, const Time::steady_tp&, bool tiled, bool floating,
-                                    bool popups); // renders workspace windows (no fullscreen) (tiled, floating, pinned, but no special)
         void renderWorkspaceWindowsFullscreen(PHLMONITOR, PHLWORKSPACE, const Time::steady_tp&); // renders workspace windows (fullscreen) (tiled, floating, pinned, but no special)
+        void renderWorkspaceWindows(PHLMONITOR, PHLWORKSPACE, const Time::steady_tp&); // renders workspace windows (no fullscreen) (tiled, floating, pinned, but no special)
         void renderAllClientsForWorkspace(PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, const Time::steady_tp& now, const Vector2D& translate = {0, 0}, const float& scale = 1.f);
         void renderWindow(PHLWINDOW, PHLMONITOR, const Time::steady_tp&, bool, eRenderPassMode, bool ignorePosition = false, bool standalone = false);
         void renderLayer(PHLLS, PHLMONITOR, const Time::steady_tp&, bool popups = false, bool lockscreen = false);
@@ -305,7 +310,7 @@ namespace Render {
         friend class CToplevelExportFrame;
         friend class Screenshare::CScreenshareFrame;
         friend class CInputManager;
-        friend class CPointerManager;
+        friend class Pointer::CPointerManager;
         friend class Monitor::CMonitor;
         friend class CMonitorFrameScheduler;
 

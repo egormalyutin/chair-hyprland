@@ -144,7 +144,7 @@ CLayerShellResource::CLayerShellResource(SP<CZwlrLayerSurfaceV1> resource_, SP<C
     });
 
     m_resource->setSetLayer([this](CZwlrLayerSurfaceV1* r, uint32_t layer) {
-        if (layer > ZWLR_LAYER_SHELL_V1_LAYER_MIDDLE) {
+        if (layer > ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY) {
             r->error(ZWLR_LAYER_SHELL_V1_ERROR_INVALID_LAYER, "Invalid layer");
             return;
         }
@@ -219,9 +219,20 @@ void CLayerShellProtocol::destroyResource(CLayerShellResource* surf) {
 }
 
 void CLayerShellProtocol::onGetLayerSurface(CZwlrLayerShellV1* pMgr, uint32_t id, wl_resource* surface, wl_resource* output, zwlrLayerShellV1Layer layer, std::string namespace_) {
-    const auto CLIENT   = pMgr->client();
-    const auto PMONITOR = output ? CWLOutputResource::fromResource(output)->m_monitor.lock() : nullptr;
-    auto       SURF     = CWLSurfaceResource::fromResource(surface);
+    const auto CLIENT = pMgr->client();
+
+    PHLMONITOR PMONITOR;
+    if (output) {
+        const auto OUTPUT = CWLOutputResource::fromResource(output);
+        if UNLIKELY (!OUTPUT) {
+            pMgr->error(-1, "Invalid output");
+            return;
+        }
+
+        PMONITOR = OUTPUT->m_monitor.lock();
+    }
+
+    auto SURF = CWLSurfaceResource::fromResource(surface);
 
     if UNLIKELY (!SURF) {
         pMgr->error(-1, "Invalid surface");
@@ -233,7 +244,7 @@ void CLayerShellProtocol::onGetLayerSurface(CZwlrLayerShellV1* pMgr, uint32_t id
         return;
     }
 
-    if UNLIKELY (layer > ZWLR_LAYER_SHELL_V1_LAYER_MIDDLE) {
+    if UNLIKELY (layer > ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY) {
         pMgr->error(ZWLR_LAYER_SHELL_V1_ERROR_INVALID_LAYER, "Invalid layer");
         return;
     }
@@ -247,11 +258,15 @@ void CLayerShellProtocol::onGetLayerSurface(CZwlrLayerShellV1* pMgr, uint32_t id
     }
 
     SURF->m_role = makeShared<CLayerShellRole>(RESOURCE);
-    g_pCompositor->m_layers.emplace_back(Desktop::View::CLayerSurface::create(RESOURCE));
+    Desktop::View::CLayerSurface::create(RESOURCE);
 
     if (PMONITOR) {
-        g_pCompositor->setPreferredScaleForSurface(SURF, PMONITOR->m_scale);
-        g_pCompositor->setPreferredTransformForSurface(SURF, PMONITOR->m_transform);
+        const auto PSURFACE = Desktop::View::CWLSurface::fromResource(SURF);
+
+        if (PSURFACE) {
+            PSURFACE->sendScale(PMONITOR->m_scale);
+            PSURFACE->sendTransform(PMONITOR->m_transform);
+        }
     }
 
     LOGM(Log::DEBUG, "New wlr_layer_surface {:x}", (uintptr_t)RESOURCE.get());
