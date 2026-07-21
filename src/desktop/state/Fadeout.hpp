@@ -21,6 +21,7 @@ namespace Desktop {
         FADEOUT_PLANE_LAYER_TOP,
         FADEOUT_PLANE_LAYER_OVERLAY,
         FADEOUT_PLANE_POPUP,
+        FADEOUT_PLANE_LAYER_MIDDLE,
     };
 
     struct SFadeoutPreBlur {

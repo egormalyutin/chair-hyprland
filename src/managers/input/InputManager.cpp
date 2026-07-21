@@ -571,6 +571,11 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
         }
     }
 
+    // this makes 0 sense
+    if (!foundSurface)
+        foundSurface =
+            Desktop::viewState()->hitTest().layerSurfaceAt(mouseCoords, &PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_MIDDLE], &surfaceCoords, &pFoundLayerSurface);
+
     // then surfaces below
     if (!foundSurface)
         foundSurface =
