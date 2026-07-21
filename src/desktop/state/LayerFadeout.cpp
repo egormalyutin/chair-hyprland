@@ -7,7 +7,6 @@
 #include "../../protocols/LayerShell.hpp"
 #include "../../render/Framebuffer.hpp"
 #include "../../render/Renderer.hpp"
-#include "desktop/state/Fadeout.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -69,7 +68,6 @@ SP<CLayerFadeout> CLayerFadeout::create(PHLLS layer, SP<Render::IFramebuffer> sn
         case ZWLR_LAYER_SHELL_V1_LAYER_BOTTOM: fadeout->m_plane = FADEOUT_PLANE_LAYER_BOTTOM; break;
         case ZWLR_LAYER_SHELL_V1_LAYER_TOP: fadeout->m_plane = FADEOUT_PLANE_LAYER_TOP; break;
         case ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY: fadeout->m_plane = FADEOUT_PLANE_LAYER_OVERLAY; break;
-        case ZWLR_LAYER_SHELL_V1_LAYER_MIDDLE: fadeout->m_plane = FADEOUT_PLANE_LAYER_MIDDLE; break;
         default: fadeout->m_plane = FADEOUT_PLANE_LAYER_TOP; break;
     }
 

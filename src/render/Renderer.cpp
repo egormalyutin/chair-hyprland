@@ -56,7 +56,6 @@
 #include "./pass/PreBlurElement.hpp"
 #include "../protocols/types/SurfaceState.hpp"
 #include "types.hpp"
-#include "wlr-layer-shell-unstable-v1.hpp"
 #include <hyprgraphics/color/Color.hpp>
 #include <hyprutils/math/Mat3x3.hpp>
 #include <hyprutils/math/Region.hpp>
@@ -330,7 +329,6 @@ bool IHyprRenderer::shouldRenderMonitor(PHLMONITOR monitor) {
 }
 
 void IHyprRenderer::renderWorkspaceWindowsFullscreen(PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, const Time::steady_tp& time) {
-    // TODO: render middle here?
     PHLWINDOW pWorkspaceWindow = nullptr;
 
     Event::bus()->m_events.render.stage.emit(RENDER_PRE_WINDOWS);
@@ -434,7 +432,7 @@ void IHyprRenderer::renderWorkspaceWindowsFullscreen(PHLMONITOR pMonitor, PHLWOR
     renderFadeouts(pMonitor, Desktop::FADEOUT_PLANE_WINDOW_OVER_FULLSCREEN, pWorkspace);
 }
 
-void IHyprRenderer::renderWorkspaceWindows(PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, const Time::steady_tp& time, bool tiled, bool floating, bool popups) {
+void IHyprRenderer::renderWorkspaceWindows(PHLMONITOR pMonitor, PHLWORKSPACE pWorkspace, const Time::steady_tp& time) {
     PHLWINDOW lastWindow;
 
     Event::bus()->m_events.render.stage.emit(RENDER_PRE_WINDOWS);
@@ -455,80 +453,74 @@ void IHyprRenderer::renderWorkspaceWindows(PHLMONITOR pMonitor, PHLWORKSPACE pWo
     }
 
     // Non-floating main
-    if (tiled) {
-        for (auto& w : windows) {
-            if (w->m_isFloating)
-                continue; // floating are in the second pass
+    for (auto& w : windows) {
+        if (w->m_isFloating)
+            continue; // floating are in the second pass
 
-            // some things may force us to ignore the special/not special disparity
-            const bool IGNORE_SPECIAL_CHECK = w->m_monitorMovedFrom != -1 && (w->m_workspace && !w->m_workspace->isVisible());
+        // some things may force us to ignore the special/not special disparity
+        const bool IGNORE_SPECIAL_CHECK = w->m_monitorMovedFrom != -1 && (w->m_workspace && !w->m_workspace->isVisible());
 
-            if (!IGNORE_SPECIAL_CHECK && pWorkspace->m_isSpecialWorkspace != w->onSpecialWorkspace())
-                continue;
+        if (!IGNORE_SPECIAL_CHECK && pWorkspace->m_isSpecialWorkspace != w->onSpecialWorkspace())
+            continue;
 
-            // render active window after all others of this pass
-            if (w == Desktop::focusState()->window()) {
-                lastWindow = w.lock();
-                continue;
-            }
-
-            // render the bad boy
-            renderWindow(w.lock(), pMonitor, time, true, RENDER_PASS_MAIN);
-            w.reset();
+        // render active window after all others of this pass
+        if (w == Desktop::focusState()->window()) {
+            lastWindow = w.lock();
+            continue;
         }
 
-        if (lastWindow)
-            renderWindow(lastWindow, pMonitor, time, true, RENDER_PASS_MAIN);
-
-        lastWindow.reset();
-
-        renderFadeouts(pMonitor, Desktop::FADEOUT_PLANE_WINDOW_TILED, pWorkspace);
+        // render the bad boy
+        renderWindow(w.lock(), pMonitor, time, true, RENDER_PASS_MAIN);
+        w.reset();
     }
 
+    if (lastWindow)
+        renderWindow(lastWindow, pMonitor, time, true, RENDER_PASS_MAIN);
+
+    lastWindow.reset();
+
+    renderFadeouts(pMonitor, Desktop::FADEOUT_PLANE_WINDOW_TILED, pWorkspace);
+
     // Non-floating popup
-    if (popups) {
-        for (auto& w : windows) {
-            if (!w)
-                continue;
+    for (auto& w : windows) {
+        if (!w)
+            continue;
 
-            if (w->m_isFloating)
-                continue; // floating are in the second pass
+        if (w->m_isFloating)
+            continue; // floating are in the second pass
 
-            // some things may force us to ignore the special/not special disparity
-            const bool IGNORE_SPECIAL_CHECK = w->m_monitorMovedFrom != -1 && (w->m_workspace && !w->m_workspace->isVisible());
+        // some things may force us to ignore the special/not special disparity
+        const bool IGNORE_SPECIAL_CHECK = w->m_monitorMovedFrom != -1 && (w->m_workspace && !w->m_workspace->isVisible());
 
-            if (!IGNORE_SPECIAL_CHECK && pWorkspace->m_isSpecialWorkspace != w->onSpecialWorkspace())
-                continue;
+        if (!IGNORE_SPECIAL_CHECK && pWorkspace->m_isSpecialWorkspace != w->onSpecialWorkspace())
+            continue;
 
-            // render the bad boy
-            renderWindow(w.lock(), pMonitor, time, true, RENDER_PASS_POPUP);
-            w.reset();
-        }
+        // render the bad boy
+        renderWindow(w.lock(), pMonitor, time, true, RENDER_PASS_POPUP);
+        w.reset();
     }
 
     // floating on top
-    if (floating) {
-        for (auto& w : windows) {
-            if (!w)
-                continue;
+    for (auto& w : windows) {
+        if (!w)
+            continue;
 
-            if (!w->m_isFloating || w->m_pinned)
-                continue;
+        if (!w->m_isFloating || w->m_pinned)
+            continue;
 
-            // some things may force us to ignore the special/not special disparity
-            const bool IGNORE_SPECIAL_CHECK = w->m_monitorMovedFrom != -1 && (w->m_workspace && !w->m_workspace->isVisible());
+        // some things may force us to ignore the special/not special disparity
+        const bool IGNORE_SPECIAL_CHECK = w->m_monitorMovedFrom != -1 && (w->m_workspace && !w->m_workspace->isVisible());
 
-            if (!IGNORE_SPECIAL_CHECK && pWorkspace->m_isSpecialWorkspace != w->onSpecialWorkspace())
-                continue;
+        if (!IGNORE_SPECIAL_CHECK && pWorkspace->m_isSpecialWorkspace != w->onSpecialWorkspace())
+            continue;
 
-            if (pWorkspace->m_isSpecialWorkspace && w->m_monitor != pWorkspace->m_monitor)
-                continue; // special on another are rendered as a part of the base pass
+        if (pWorkspace->m_isSpecialWorkspace && w->m_monitor != pWorkspace->m_monitor)
+            continue; // special on another are rendered as a part of the base pass
 
-            // render the bad boy
-            renderWindow(w.lock(), pMonitor, time, true, RENDER_PASS_ALL);
-        }
-        renderFadeouts(pMonitor, Desktop::FADEOUT_PLANE_WINDOW_FLOATING, pWorkspace);
+        // render the bad boy
+        renderWindow(w.lock(), pMonitor, time, true, RENDER_PASS_ALL);
     }
+    renderFadeouts(pMonitor, Desktop::FADEOUT_PLANE_WINDOW_FLOATING, pWorkspace);
 }
 
 void IHyprRenderer::bindOffMain() {
@@ -1153,11 +1145,6 @@ void IHyprRenderer::renderAllClientsForWorkspace(PHLMONITOR pMonitor, PHLWORKSPA
         }
         renderFadeouts(pMonitor, Desktop::FADEOUT_PLANE_LAYER_BOTTOM);
 
-        for (auto const& ls : pMonitor->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_MIDDLE]) {
-            renderLayer(ls.lock(), pMonitor, time);
-        }
-        renderFadeouts(pMonitor, Desktop::FADEOUT_PLANE_LAYER_MIDDLE);
-
         for (auto const& ls : pMonitor->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP]) {
             renderLayer(ls.lock(), pMonitor, time);
         }
@@ -1193,14 +1180,8 @@ void IHyprRenderer::renderAllClientsForWorkspace(PHLMONITOR pMonitor, PHLWORKSPA
 
     if UNLIKELY /* subjective? */ (Fullscreen::controller()->hasFullscreen(pWorkspace))
         renderWorkspaceWindowsFullscreen(pMonitor, pWorkspace, time);
-    else {
-        renderWorkspaceWindows(pMonitor, pWorkspace, time, true, false, false);
-        for (auto const& ls : pMonitor->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_MIDDLE]) {
-            renderLayer(ls.lock(), pMonitor, time);
-        }
-        renderFadeouts(pMonitor, Desktop::FADEOUT_PLANE_LAYER_MIDDLE);
-        renderWorkspaceWindows(pMonitor, pWorkspace, time, false, true, true);
-    }
+    else
+        renderWorkspaceWindows(pMonitor, pWorkspace, time);
 
     // and then special
     if UNLIKELY (pMonitor->m_specialDim->value() != 0.F) {
@@ -1229,7 +1210,7 @@ void IHyprRenderer::renderAllClientsForWorkspace(PHLMONITOR pMonitor, PHLWORKSPA
         if (Fullscreen::controller()->hasFullscreen(ws.lock()))
             renderWorkspaceWindowsFullscreen(pMonitor, ws.lock(), time);
         else
-            renderWorkspaceWindows(pMonitor, ws.lock(), time, true, true, true); // TODO
+            renderWorkspaceWindows(pMonitor, ws.lock(), time);
     }
 
     // pinned always above

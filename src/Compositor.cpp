@@ -8,7 +8,6 @@
 #include "desktop/history/WorkspaceHistoryTracker.hpp"
 #include "helpers/Splashes.hpp"
 #include "helpers/SystemInfo.hpp"
-#include "init/initHelpers.hpp"
 #include "config/ConfigValue.hpp"
 #include "config/shared/inotify/ConfigWatcher.hpp"
 #include "config/shared/monitor/MonitorRuleManager.hpp"
@@ -675,9 +674,6 @@ void CCompositor::initManagers(eManagersInitStage stage) {
             Log::logger->log(Log::DEBUG, "Creating the TokenManager!");
             g_pTokenManager = makeUnique<CTokenManager>();
 
-            Log::logger->log(Log::DEBUG, "Creating the EventManager!");
-            g_pEventManager = makeUnique<CEventManager>();
-
             // create executor
             Config::Supplementary::executor();
 
@@ -685,6 +681,9 @@ void CCompositor::initManagers(eManagersInitStage stage) {
 
             Log::logger->log(Log::DEBUG, "Creating the PointerManager!");
             Pointer::mgr() = makeUnique<Pointer::CPointerManager>();
+
+            Log::logger->log(Log::DEBUG, "Creating the EventManager!");
+            g_pEventManager = makeUnique<CEventManager>();
 
             Log::logger->log(Log::DEBUG, "Creating the AsyncResourceGatherer!");
             g_pAsyncResourceGatherer = makeUnique<Hyprgraphics::CAsyncResourceGatherer>();
@@ -818,9 +817,6 @@ void CCompositor::startCompositor() {
         if (!writeWatchdogFd("vax"))
             Log::logger->log(Log::ERR, "startCompositor: failed to write to watchdogWriteFd {}: {}", m_watchdogWriteFd.get(), strerror(errno));
     }
-
-    if (!Env::envEnabled("HYPRLAND_NO_RT"))
-        NInit::gainRealTime();
 
     // This blocks until we are done.
     Log::logger->log(Log::DEBUG, "Hyprland is ready, running the event loop!");

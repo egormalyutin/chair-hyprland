@@ -4,10 +4,6 @@
 #include "../output/Monitor.hpp"
 #include "../event/EventBus.hpp"
 #include "../state/MonitorState.hpp"
-#include "../desktop/view/View.hpp"
-#include "../render/Renderer.hpp"
-#include <algorithm>
-#include <hyprutils/memory/WeakPtr.hpp>
 
 CFifoResource::CFifoResource(UP<CWpFifoV1>&& resource_, SP<CWLSurfaceResource> surface) : m_resource(std::move(resource_)), m_surface(surface) {
     if UNLIKELY (!m_resource->resource())
@@ -49,8 +45,7 @@ CFifoResource::CFifoResource(UP<CWpFifoV1>&& resource_, SP<CWLSurfaceResource> s
         if (!state || !state->surfaceLocked)
             return;
 
-        static const auto PPEND  = CConfigValue<Config::INTEGER>("debug:fifo_pending_workaround");
-        static const auto PINVIS = CConfigValue<Hyprlang::INT>("render:not_shown_fifo_lock");
+        static const auto PPEND = CConfigValue<Config::INTEGER>("debug:fifo_pending_workaround");
 
         //#TODO:
         // this feels wrong, but if we have no pending frames, presented might never come because
@@ -62,31 +57,9 @@ CFifoResource::CFifoResource(UP<CWpFifoV1>&& resource_, SP<CWLSurfaceResource> s
         if (!state->fifoScheduled)
             return;
 
-        // only lock once its mapped and visible
-        if (m_surface->m_mapped) {
-            bool shouldLock = *PINVIS == 0 || !m_surface->m_hlSurface; // always && unknown
-            if (!shouldLock && m_surface->m_hlSurface) {
-                const auto& view = m_surface->m_hlSurface->view();
-                if (view) {
-                    const auto& window    = view->type() == Desktop::View::VIEW_TYPE_WINDOW ? dynamicPointerCast<Desktop::View::CWindow>(view) : nullptr;
-                    const bool  isVisible = (view && view->visible() && //
-                                             (!window || std::ranges::any_of(State::monitorState()->monitors(), [window](const auto& mon) {
-                                                return g_pHyprRenderer->shouldRenderWindow(window, mon);
-                                             })));
-                    if (isVisible)
-                        shouldLock = true;
-                    else if (*PINVIS == 2) // never
-                        shouldLock = false;
-                    else if (window && window->m_ruleApplicator->renderUnfocused().valueOr(false))
-                        shouldLock = false; // ignore render_unfocused
-                    else
-                        shouldLock = true;
-                } else
-                    shouldLock = true;
-            }
-            if (shouldLock)
-                m_surface->m_stateQueue.lock(state, LOCK_REASON_FIFO);
-        }
+        // only lock once its mapped.
+        if (m_surface->m_mapped)
+            m_surface->m_stateQueue.lock(state, LOCK_REASON_FIFO);
     });
 }
 

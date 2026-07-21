@@ -703,7 +703,7 @@ static std::string layersRequest(eHyprCtlOutputFormat format, std::string reques
         for (auto const& mon : State::monitorState()->monitors()) {
             result += std::format("Monitor {}:\n", mon->m_name);
             int                                     layerLevel = 0;
-            static const std::array<std::string, 5> levelNames = {"background", "bottom", "top", "overlay", "middle"};
+            static const std::array<std::string, 4> levelNames = {"background", "bottom", "top", "overlay"};
             for (auto const& level : mon->m_layerSurfaceLayers) {
                 result += std::format("\tLayer level {} ({}):\n", layerLevel, levelNames[layerLevel]);
 
@@ -1075,9 +1075,9 @@ static std::string bindsRequest(eHyprCtlOutputFormat format, std::string request
     "arg": "{}"
 }},)#",
                 kb->locked ? "true" : "false", kb->mouse ? "true" : "false", kb->release ? "true" : "false", kb->repeat ? "true" : "false", kb->longPress ? "true" : "false",
-                kb->nonConsuming ? "true" : "false", kb->autoConsuming ? "true" : "false", kb->hasDescription ? "true" : "false", kb->modmask, escapeJSONStrings(kb->submap.name),
-                kb->submapUniversal, escapeJSONStrings(kb->key), kb->keycode, kb->catchAll ? "true" : "false", escapeJSONStrings(kb->description),
-                kb->allowInputCapture ? "true" : "false", escapeJSONStrings(kb->handler), escapeJSONStrings(kb->arg));
+                kb->nonConsuming ? "true" : "false", kb->autoConsuming ? "true" : "false", kb->allowInputCapture ? "true" : "false", kb->hasDescription ? "true" : "false",
+                kb->modmask, escapeJSONStrings(kb->submap.name), kb->submapUniversal, escapeJSONStrings(kb->key), kb->keycode, kb->catchAll ? "true" : "false",
+                escapeJSONStrings(kb->description), escapeJSONStrings(kb->handler), escapeJSONStrings(kb->arg));
         }
         trimTrailingComma(ret);
         ret += "]";

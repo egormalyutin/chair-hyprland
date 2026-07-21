@@ -571,11 +571,6 @@ void CInputManager::mouseMoveUnified(uint32_t time, bool refocus, bool mouse, st
         }
     }
 
-    // this makes 0 sense
-    if (!foundSurface)
-        foundSurface =
-            Desktop::viewState()->hitTest().layerSurfaceAt(mouseCoords, &PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_MIDDLE], &surfaceCoords, &pFoundLayerSurface);
-
     // then surfaces below
     if (!foundSurface)
         foundSurface =
@@ -1696,10 +1691,8 @@ void CInputManager::onKeyboardMod(SP<IKeyboard> pKeyboard) {
     if (*PSENDMOD) {
         PROTO::inputCapture->modifiers(MODS.depressed, MODS.latched, MODS.locked, MODS.group);
 
-        if (PROTO::inputCapture->isCaptured()) {
-            m_lastMods = shareModsFromAllKBs(MODS.depressed);
+        if (PROTO::inputCapture->isCaptured())
             return;
-        }
     }
 
     // use merged mods states when sending to ime or when sending to seat with no ime
